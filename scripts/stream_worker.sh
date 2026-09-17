@@ -8,12 +8,23 @@ cd "$BASE_DIR"; [ -f .env ] && { set -a; source .env 2>/dev/null; set +a; } || t
 source "$BASE_DIR/scripts/platforms.sh"; STREAM_PROFILE="$PROFILE_REQ"; export STREAM_PROFILE
 source "$BASE_DIR/scripts/hardware_profile.sh"; read -r STREAM_WIDTH STREAM_HEIGHT < <(quran_profile_dimensions "$PROFILE_REQ" "$LAYOUT")
 RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; GR="$RUNTIME/groups/$GROUP"; mkdir -p "$GR" "$LOG_DIR"
-LOG="$LOG_DIR/stream_${GROUP}.log"; PROGRESS="$GR/ffmpeg.progress"; STOP_FLAG="$RUNTIME/broadcast_stopped.flag"
+LOG="$LOG_DIR/stream_${GROUP}.log"; PROGRESS="$GR/ffmpeg.progress"; FFMPEG_PID_FILE="$GR/ffmpeg.pid"; STOP_FLAG="$RUNTIME/broadcast_stopped.flag"; FFMPEG_PID=""
 log(){ echo "[$(date '+%F %T')] [$GROUP] $*" | tee -a "$LOG"; }
 to_kbit(){ case "${1:-}" in *[kK])echo "${1%[kK]}";; *[mM])echo "$(( ${1%[mM]}*1000 ))";; ''|*[!0-9]*)echo 0;; *)echo "$1";; esac; }
 profile_quality_kbit(){ local p="$1" fps="$2"; case "$p" in nano)echo 600;;micro)echo 1000;;eco)[ "$fps" -ge 50 ]&&echo 6000||echo 4000;;balanced)[ "$fps" -ge 50 ]&&echo 12000||echo 8000;;high)[ "$fps" -ge 50 ]&&echo 24000||echo 15000;;ultra)[ "$fps" -ge 50 ]&&echo 35000||echo 30000;;extreme)[ "$fps" -ge 50 ]&&echo 60000||echo 45000;;*)echo 1000;;esac; }
 software_preset(){ case "$1" in nano|micro|eco|high|ultra|extreme)echo ultrafast;;balanced)echo veryfast;;*)echo ultrafast;;esac; }
 h264_profile_rank(){ case "${1:-high}" in baseline)echo 0;;main)echo 1;;*)echo 2;;esac; }
+cleanup_worker(){
+  local pid="${FFMPEG_PID:-}"
+  [ -n "$pid" ] || pid="$(cat "$FFMPEG_PID_FILE" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep .2; done
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$FFMPEG_PID_FILE"
+}
+trap 'cleanup_worker; exit 0' INT TERM
 
 IFS=',' read -ra TARGETS <<< "$TARGET_CSV"; TARGET_COUNT=${#TARGETS[@]}; [ "$TARGET_COUNT" -gt 0 ] || exit 1
 FPS="$STREAM_FPS"; GROUP_AUDIO_RATE="$AUDIO_SAMPLERATE"; GROUP_AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"; GROUP_AUDIO_KBIT="$(to_kbit "$AUDIO_BITRATE")"; H264_PROFILE=high; H264_PROFILE_RANK=2
@@ -59,8 +70,10 @@ if [ "${AUDIO_MODE:-pulse}" = file ]; then "$BASE_DIR/scripts/build_audio_playli
 FPSMODE=(-fps_mode cfr); ffmpeg -hide_banner -h full 2>/dev/null|grep -q -- -fps_mode||FPSMODE=(-vsync cfr); GOP=$((FPS*2)); [ "$GOP" -lt 2 ]&&GOP=2
 printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nFPS=%s\nVIDEO_KBIT=%s\nENCODER=%s\nH264_PROFILE=%s\nAUDIO_KBIT=%s\nAUDIO_RATE=%s\nAUDIO_CHANNELS=%s\nTARGETS=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$FPS" "$VIDEO_KBIT" "$ACTIVE_ENCODER" "$H264_PROFILE" "$GROUP_AUDIO_KBIT" "$GROUP_AUDIO_RATE" "$GROUP_AUDIO_CHANNELS" "$TARGET_CSV" > "$GR/worker.env"
 while [ ! -f "$STOP_FLAG" ]; do
- rm -f "$PROGRESS"; log "Native encode ${STREAM_WIDTH}x${STREAM_HEIGHT}@${FPS} ${VIDEO_BITRATE} encoder=$ACTIVE_ENCODER h264_profile=$H264_PROFILE audio=${GROUP_AUDIO_BITRATE}/${GROUP_AUDIO_RATE}Hz/${GROUP_AUDIO_CHANNELS}ch targets=$TARGET_SUMMARY"; set +e
- ffmpeg -hide_banner -loglevel warning -nostdin "${VAAPI_PRE[@]}" -f x11grab -framerate "$FPS" -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" -draw_mouse 0 -thread_queue_size 64 -probesize 32k -analyzeduration 0 -i ":$DISPLAY_NUM.0" "${AUDIO_INPUT[@]}" -map 0:v:0 -map 1:a:0 -vf "$VF" "${VARGS[@]}" "${PIXFMT[@]}" -b:v "$VIDEO_BITRATE" -maxrate "$MAX_BITRATE" -bufsize "$BUF_SIZE" -g "$GOP" -keyint_min "$GOP" -sc_threshold 0 -r "$FPS" "${FPSMODE[@]}" -c:a aac -b:a "$GROUP_AUDIO_BITRATE" -ar "$GROUP_AUDIO_RATE" -ac "$GROUP_AUDIO_CHANNELS" -af "aresample=${GROUP_AUDIO_RATE}:async=1:first_pts=0" -flags +global_header -progress "$PROGRESS" -stats_period 5 -f tee "${TEE_EXTRA[@]}" "$TEE_SPEC" >>"$LOG" 2>&1
- EC=$?; set -e; [ -f "$STOP_FLAG" ]&&break; log "FFmpeg exited $EC; retry in 4s."; sleep 4
+ rm -f "$PROGRESS" "$FFMPEG_PID_FILE"; log "Native encode ${STREAM_WIDTH}x${STREAM_HEIGHT}@${FPS} ${VIDEO_BITRATE} encoder=$ACTIVE_ENCODER h264_profile=$H264_PROFILE audio=${GROUP_AUDIO_BITRATE}/${GROUP_AUDIO_RATE}Hz/${GROUP_AUDIO_CHANNELS}ch targets=$TARGET_SUMMARY"; set +e
+ ffmpeg -hide_banner -loglevel warning -nostdin "${VAAPI_PRE[@]}" -f x11grab -framerate "$FPS" -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" -draw_mouse 0 -thread_queue_size 64 -probesize 32k -analyzeduration 0 -i ":$DISPLAY_NUM.0" "${AUDIO_INPUT[@]}" -map 0:v:0 -map 1:a:0 -vf "$VF" "${VARGS[@]}" "${PIXFMT[@]}" -b:v "$VIDEO_BITRATE" -maxrate "$MAX_BITRATE" -bufsize "$BUF_SIZE" -g "$GOP" -keyint_min "$GOP" -sc_threshold 0 -r "$FPS" "${FPSMODE[@]}" -c:a aac -b:a "$GROUP_AUDIO_BITRATE" -ar "$GROUP_AUDIO_RATE" -ac "$GROUP_AUDIO_CHANNELS" -af "aresample=${GROUP_AUDIO_RATE}:async=1:first_pts=0" -flags +global_header -progress "$PROGRESS" -stats_period 5 -f tee "${TEE_EXTRA[@]}" "$TEE_SPEC" >>"$LOG" 2>&1 &
+ FFMPEG_PID=$!; echo "$FFMPEG_PID" > "$FFMPEG_PID_FILE"; wait "$FFMPEG_PID"; EC=$?; FFMPEG_PID=""; rm -f "$FFMPEG_PID_FILE"; set -e
+ [ -f "$STOP_FLAG" ]&&break; log "FFmpeg exited $EC; retry in 4s."; sleep 4
 done
+cleanup_worker
 log "Worker stopped."
