@@ -55,6 +55,11 @@ jobs:
           grep -q 'platform.css' web/index.html
           grep -q 'platform-layout.js' web/index.html
           grep -q 'layout="portrait"\|portrait)' scripts/platforms.sh
+          grep -q 'quran-live.service' scripts/health_check.sh
+          if grep -nE 'quran-live-(youtube|tiktok)\.service|stream_(youtube|tiktok)' scripts/health_check.sh; then
+            echo 'health_check.sh still references the retired split-service architecture.'
+            exit 1
+          fi
 
       - name: Validate platform ingest contracts
         shell: bash
