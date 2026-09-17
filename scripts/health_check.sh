@@ -46,6 +46,17 @@ for i in $(seq 0 $((EXPECTED-1))); do
   cp="$(cat "$d/chrome.pid" 2>/dev/null || true)"; xp="$(cat "$d/xvfb.pid" 2>/dev/null || true)"
   [ -n "$cp" ] && kill -0 "$cp" 2>/dev/null || ok=0
   [ -n "$xp" ] && kill -0 "$xp" 2>/dev/null || ok=0
+
+  # Match watchdog semantics: a recent progress file is insufficient if FFmpeg
+  # has already exited (or its PID was reused by another process). Verify the
+  # exact worker-owned PID and process identity before declaring the group live.
+  fp="$(cat "$d/ffmpeg.pid" 2>/dev/null || true)"; ffmpeg_alive=0
+  if [[ "$fp" =~ ^[0-9]+$ ]] && kill -0 "$fp" 2>/dev/null; then
+    comm="$(ps -p "$fp" -o comm= 2>/dev/null | tr -d '[:space:]' || true)"
+    [ "$comm" = "ffmpeg" ] && ffmpeg_alive=1 || true
+  fi
+  [ "$ffmpeg_alive" -eq 1 ] || ok=0
+
   if [ -f "$d/ffmpeg.progress" ]; then
     mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"
     case "$mt" in ''|*[!0-9]*)mt=0;; esac
@@ -56,7 +67,7 @@ for i in $(seq 0 $((EXPECTED-1))); do
   if [ "$ok" -eq 1 ]; then
     GOOD=$((GOOD+1)); log "g$i healthy."
   else
-    log "FAIL g$i incomplete or stale."
+    log "FAIL g$i incomplete, encoder-dead, or stale."
   fi
 done
 [ "$GOOD" -eq "$EXPECTED" ] || FAIL=1
