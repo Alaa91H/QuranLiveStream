@@ -17,7 +17,7 @@ export STREAM_WIDTH STREAM_HEIGHT
 PORT="${QURAN_WEB_PORT:-4177}"; RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"
 GR="$RUNTIME/groups/$GROUP"; mkdir -p "$GR" "$LOG_DIR"
 WEB_PID="$RUNTIME/quran-web.pid"; XVFB_PID="$GR/xvfb.pid"; CHROME_PID="$GR/chrome.pid"
-SIG="$STREAM_WIDTH:$STREAM_HEIGHT:$LAYOUT:$PROFILE_REQ:${AUDIO_MODE:-pulse}:${GROUP_AUDIO_MASTER:-0}"
+SIG="$STREAM_WIDTH:$STREAM_HEIGHT:$LAYOUT:$PROFILE_REQ:${GROUP_AUDIO_MASTER:-0}"
 web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null | grep -q '"ok":true'; }
 
 # One shared Node server for all canvases. flock prevents a multi-worker race.
@@ -56,14 +56,15 @@ web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev
   fi
 ) 9>"$RUNTIME/web.lock" || exit 1
 
-# Pulse sink exists once. Only group0 emits browser audio; every FFmpeg worker
-# may read the same monitor, avoiding duplicate audio playback/decoding paths.
-if [ "${AUDIO_MODE:-pulse}" != "file" ] && [ "${GROUP_AUDIO_MASTER:-0}" = "1" ] && command -v pactl >/dev/null 2>&1; then
+# One browser (group0) is the recitation master. It emits browser audio into a
+# single null sink; all FFmpeg workers read that monitor. Follower canvases are
+# muted and mirror the master's verse through the local playback API.
+if [ "${GROUP_AUDIO_MASTER:-0}" = "1" ] && command -v pactl >/dev/null 2>&1; then
   if ! pactl info >/dev/null 2>&1; then pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true; sleep 1; fi
   pactl list short sinks 2>/dev/null | grep -q '[[:space:]]quran_sink[[:space:]]' || pactl load-module module-null-sink sink_name=quran_sink sink_properties=device.description=QuranSink >/dev/null 2>&1 || true
 fi
 
-# Geometry/profile change => recreate this group's native X/Chrome canvas.
+# Geometry/profile/master change => recreate this group's native X/Chrome canvas.
 if [ "$(cat "$GR/signature" 2>/dev/null)" != "$SIG" ]; then
   kill "$(cat "$CHROME_PID" 2>/dev/null)" 2>/dev/null || true
   kill "$(cat "$XVFB_PID" 2>/dev/null)" 2>/dev/null || true
@@ -81,10 +82,11 @@ if ! kill -0 "$(cat "$CHROME_PID" 2>/dev/null)" 2>/dev/null; then
   [ -n "$BROWSER_BIN" ] || BROWSER_BIN="$(command -v google-chrome || command -v chromium-browser || command -v chromium || echo chromium)"
   CITIES="${GOVERNOR_CITY_LIMIT:-$(quran_layout_default_cities "$LAYOUT" "$PROFILE_REQ")}"; LOWFX=0
   case "$PROFILE_REQ" in nano|micro) LOWFX=1;; esac
-  QUERY="layout=$LAYOUT&profile=$PROFILE_REQ&group=$GROUP&cities=$CITIES&lowfx=$LOWFX"
+  MASTER="${GROUP_AUDIO_MASTER:-0}"
+  QUERY="layout=$LAYOUT&profile=$PROFILE_REQ&group=$GROUP&cities=$CITIES&lowfx=$LOWFX&master=$MASTER"
 
   CHROME_AUDIO=(); SINK_ENV=()
-  if [ "${AUDIO_MODE:-pulse}" = "file" ] || [ "${GROUP_AUDIO_MASTER:-0}" != "1" ]; then
+  if [ "$MASTER" != "1" ]; then
     CHROME_AUDIO=(--mute-audio --disable-audio-output)
   else
     SINK_ENV=(PULSE_SINK=quran_sink)
@@ -116,5 +118,5 @@ if ! kill -0 "$(cat "$CHROME_PID" 2>/dev/null)" 2>/dev/null; then
 fi
 
 echo "$SIG" > "$GR/signature"
-printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nDISPLAY=%s\nCITIES=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$DISPLAY_NUM" "${CITIES:-}" > "$GR/ui.env"
-echo "[$(date '+%F %T')] UI $GROUP ready: ${STREAM_WIDTH}x${STREAM_HEIGHT} layout=$LAYOUT profile=$PROFILE_REQ display=:$DISPLAY_NUM"
+printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nDISPLAY=%s\nCITIES=%s\nMASTER=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$DISPLAY_NUM" "${CITIES:-}" "${MASTER:-${GROUP_AUDIO_MASTER:-0}}" > "$GR/ui.env"
+echo "[$(date '+%F %T')] UI $GROUP ready: ${STREAM_WIDTH}x${STREAM_HEIGHT} layout=$LAYOUT profile=$PROFILE_REQ display=:$DISPLAY_NUM master=${MASTER:-${GROUP_AUDIO_MASTER:-0}}"
