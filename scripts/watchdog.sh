@@ -35,12 +35,18 @@ for i in $(seq 0 $((EXPECTED-1))); do
   [ -n "$cp" ] && kill -0 "$cp" 2>/dev/null || ok=0
   [ -n "$xp" ] && kill -0 "$xp" 2>/dev/null || ok=0
 
-  # A live FFmpeg PID alone is not proof of a healthy encoder: a blocked x11,
-  # audio, network or muxer path can leave the process alive indefinitely. The
-  # -progress file is FFmpeg's actual heartbeat, so require it to stay fresh.
-  ffmpeg_alive=0
-  pgrep -af ffmpeg 2>/dev/null | grep -q "${d}/ffmpeg.progress\|:$((90+i))\.0" && ffmpeg_alive=1 || true
+  # The worker owns FFmpeg explicitly and records its exact PID. This avoids
+  # false positives from unrelated/stale FFmpeg commands elsewhere on the host.
+  fp="$(cat "$d/ffmpeg.pid" 2>/dev/null || true)"; ffmpeg_alive=0
+  if [[ "$fp" =~ ^[0-9]+$ ]] && kill -0 "$fp" 2>/dev/null; then
+    comm="$(ps -p "$fp" -o comm= 2>/dev/null | tr -d '[:space:]' || true)"
+    [ "$comm" = "ffmpeg" ] && ffmpeg_alive=1 || true
+  fi
   [ "$ffmpeg_alive" -eq 1 ] || ok=0
+
+  # PID liveness alone is not proof of a healthy encoder: a blocked x11,
+  # audio, network or muxer path can leave FFmpeg alive indefinitely. Require
+  # its -progress heartbeat to remain fresh as well.
   if [ -f "$d/ffmpeg.progress" ]; then
     mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"
     [ "$((now-mt))" -le 30 ] || ok=0
