@@ -20,7 +20,6 @@ prof(){ quran_profile_at "$1"; }
 # but universal mode never lets it force a weak host above measured capacity.
 REQUESTED="${STREAM_PROFILE:-auto}"
 unset STREAM_PROFILE || true
-# shellcheck disable=SC1091
 source "$BASE_DIR/scripts/hardware_profile.sh"
 HW_PROFILE="$PROFILE"; HW_RANK="$(rank "$HW_PROFILE")"
 GLOBAL_RANK="$HW_RANK"
@@ -29,7 +28,6 @@ if [ -n "$REQUESTED" ] && [ "${REQUESTED,,}" != "auto" ]; then
   [ "$REQ_RANK" -lt "$GLOBAL_RANK" ] && GLOBAL_RANK="$REQ_RANK"
 fi
 if [ -f "$RUNTIME/governor.env" ] && [ "${RESOURCE_GOVERNOR:-1}" != "0" ]; then
-  # shellcheck disable=SC1091
   source "$RUNTIME/governor.env" 2>/dev/null || true
   if [ -n "${GOVERNOR_PROFILE:-}" ]; then
     GOV_RANK="$(rank "$GOVERNOR_PROFILE")"
@@ -42,14 +40,21 @@ CPU_N="$(nproc 2>/dev/null || echo 1)"
 RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo 1024)"
 case "$CPU_N" in ''|*[!0-9]*)CPU_N=1;; esac
 case "$RAM_MB" in ''|*[!0-9]*)RAM_MB=1024;; esac
-GPU_HINT=0
-if ffmpeg -hide_banner -encoders 2>/dev/null | grep -Eq ' h264_(nvenc|vaapi|qsv) '; then GPU_HINT=1; fi
+
+# Never treat an encoder listed by ffmpeg as proof of a usable GPU. Preflight
+# performs a real smoke test and records the only trusted acceleration verdict.
+GPU_VERIFIED=0
+if [ -f "$RUNTIME/preflight.env" ]; then
+  source "$RUNTIME/preflight.env" 2>/dev/null || true
+  case "${PREFLIGHT_HW_OK:-}" in nvenc|vaapi|qsv) GPU_VERIFIED=1;; esac
+fi
 
 POLICY="${QUALITY_POLICY:-auto}"
 if [ "$POLICY" = "auto" ]; then
-  # Split same-aspect destinations into their individual maxima only when the
-  # host has enough headroom. Otherwise sharing an encoder wins decisively.
-  if { [ "$GPU_HINT" -eq 1 ] && [ "$RAM_MB" -ge 4096 ]; } || { [ "$CPU_N" -ge 8 ] && [ "$RAM_MB" -ge 8192 ] && [ "$GLOBAL_RANK" -ge 4 ]; }; then
+  # Split same-aspect destinations into platform-specific quality groups only
+  # when there is substantial verified headroom. Weak hosts prefer sharing.
+  if { [ "$GPU_VERIFIED" -eq 1 ] && [ "$RAM_MB" -ge 4096 ] && [ "$GLOBAL_RANK" -ge 3 ]; } || \
+     { [ "$CPU_N" -ge 8 ] && [ "$RAM_MB" -ge 8192 ] && [ "$GLOBAL_RANK" -ge 4 ]; }; then
     POLICY=maximize
   else
     POLICY=efficient
@@ -66,8 +71,6 @@ while IFS= read -r t; do
 done < <(quran_targets_lines)
 [ "${#TARGETS[@]}" -gt 0 ] || { echo "No targets selected" >&2; exit 1; }
 
-# Accumulate groups in associative arrays. Key includes codec because codecs
-# cannot share one tee encoder. In maximize mode rank is also part of the key.
 declare -A G_TARGETS G_RANK G_LAYOUT G_CODEC
 ORDER=()
 for t in "${TARGETS[@]}"; do
@@ -80,7 +83,6 @@ for t in "${TARGETS[@]}"; do
     ORDER+=("$key"); G_TARGETS[$key]="$t"; G_RANK[$key]="$desired"; G_LAYOUT[$key]="$layout"; G_CODEC[$key]="$codec"
   else
     G_TARGETS[$key]="${G_TARGETS[$key]},$t"
-    # Efficient groups share the highest native quality accepted by ALL members.
     [ "$desired" -lt "${G_RANK[$key]}" ] && G_RANK[$key]="$desired"
   fi
 done
@@ -101,6 +103,7 @@ done
   echo "policy=$POLICY"
   echo "hardware_ceiling=$HW_PROFILE"
   echo "active_ceiling=$GLOBAL_PROFILE"
+  echo "verified_gpu=$GPU_VERIFIED"
   echo "groups=$i"
   cat "$SUMMARY"
 } > "$SUMMARY.tmp" && mv "$SUMMARY.tmp" "$SUMMARY"
