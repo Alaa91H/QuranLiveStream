@@ -1,44 +1,18 @@
-#!/bin/bash
-# ==============================================================================
-# Quran Live Stream — Crontab Installer for Autonomous Maintenance & Watchdog
-# ==============================================================================
+#!/usr/bin/env bash
+# Install low-frequency recovery/maintenance jobs. The fast 15s resource loop is
+# a systemd user service, not cron, so CPU/RAM protection reacts promptly.
 set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-
-WATCHDOG_SCRIPT="$BASE_DIR/scripts/watchdog.sh"
-MAINTENANCE_SCRIPT="$BASE_DIR/scripts/maintenance.sh"
-SPEED_SCRIPT="$BASE_DIR/scripts/monitor_speed.sh"
-
 chmod +x "$BASE_DIR"/scripts/*.sh 2>/dev/null || true
-
-# Prepare cron lines
-CRON_WATCHDOG="* * * * * $WATCHDOG_SCRIPT >/dev/null 2>&1"
-CRON_MAINTENANCE="30 3 * * * $MAINTENANCE_SCRIPT >/dev/null 2>&1"
-# Encode-speed monitor: restarts on sustained <0.8x + Telegram alert if configured
-CRON_SPEED="*/3 * * * * $SPEED_SCRIPT >/dev/null 2>&1"
-
-# Read existing crontab
-CURRENT_CRON=$(crontab -l 2>/dev/null || true)
-
-# Remove existing Quran cron entries if any
-CLEANED_CRON=$(echo "$CURRENT_CRON" | grep -v "$BASE_DIR/scripts" || true)
-
-# Append new entries
-NEW_CRON=$(printf "%s\n# Quran Live Stream Autonomous Jobs\n%s\n%s\n%s\n" "$CLEANED_CRON" "$CRON_WATCHDOG" "$CRON_MAINTENANCE" "$CRON_SPEED" | sed '/^$/N;/^\n$/D')
-
-echo "$NEW_CRON" | crontab -
-
-echo "=========================================================="
-echo "✓ Quran Live Stream crontab successfully installed!"
-echo "  - Watchdog    : Runs every 1 minute to ensure 100% uptime"
-echo "  - Maintenance : Runs daily at 03:30 AM (updates, cleanup, RAM refresh)"
-echo "  - Speed check : Encode speed every 3 min (auto-restart + alert)"
-echo "=========================================================="
-crontab -l | grep "$BASE_DIR"
-
-# First-boot adaptation (detect/provision/benchmark): once per install unless
-# FIRST_BOOT=0. Takes ~2-5 min (swap/zram setup + egress probe + x264 bench).
-if [ "${FIRST_BOOT:-1}" = "1" ]; then
-  echo "Running first-boot host adaptation (detect/provision/benchmark)..."
-  "$BASE_DIR/scripts/first_boot.sh" || echo " first-boot had warnings (see logs/), continuing."
-fi
+"$BASE_DIR/scripts/control.sh" install-units >/dev/null 2>&1 || true
+if command -v systemctl >/dev/null 2>&1; then systemctl --user enable --now quran-live-governor.service >/dev/null 2>&1 || true; fi
+CURRENT="$(crontab -l 2>/dev/null || true)"
+CLEAN="$(printf '%s\n' "$CURRENT" | grep -v "$BASE_DIR/scripts" || true)"
+{
+  printf '%s\n' "$CLEAN"
+  echo '# QuranLiveStream autonomous jobs'
+  echo "*/2 * * * * $BASE_DIR/scripts/watchdog.sh >/dev/null 2>&1"
+  echo "30 3 * * * $BASE_DIR/scripts/maintenance.sh >/dev/null 2>&1"
+} | crontab -
+echo "✓ watchdog every 2 min; maintenance daily 03:30; resource governor every ${RESOURCE_INTERVAL_SEC:-15}s via systemd"
+if [ "${FIRST_BOOT:-1}" = "1" ]; then "$BASE_DIR/scripts/first_boot.sh" || true; fi
