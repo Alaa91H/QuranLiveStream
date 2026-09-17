@@ -40,7 +40,7 @@ web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev
       exit 1
     fi
 
-    (cd "$BASE_DIR/web" && PORT="$PORT" node --max-old-space-size="${NODE_MEM_MB}" server.js >>"$LOG_DIR/web.log" 2>&1 & echo $! >"$WEB_PID")
+    (cd "$BASE_DIR/web" && PORT="$PORT" node --require "$BASE_DIR/web/playback-hook.js" --max-old-space-size="${NODE_MEM_MB}" server.js >>"$LOG_DIR/web.log" 2>&1 & echo $! >"$WEB_PID")
     ready=0
     for _ in $(seq 1 30); do
       if web_healthy; then ready=1; break; fi
