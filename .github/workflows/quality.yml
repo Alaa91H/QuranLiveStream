@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  static-quality:
+  quality:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -48,7 +48,6 @@ jobs:
           grep -q 'quran_profile_dimensions' scripts/platforms.sh
           grep -q 'stream_worker.sh' scripts/stream_multi.sh
           grep -q 'stream_plan.sh' scripts/stream_multi.sh
-          # The final FFmpeg video filter chain must not contain geometry changes.
           if grep -nE -- '-vf[[:space:]]+[^#]*(scale|crop|pad)|-filter_complex[[:space:]]+[^#]*(scale|crop|pad)' scripts/stream_worker.sh; then
             echo 'Native worker contains a forbidden scale/crop/pad FFmpeg filter.'
             exit 1
@@ -66,3 +65,9 @@ jobs:
             exit 1
           fi
           test -f .env.example
+
+      - name: Full offline QA suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/qa.js
