@@ -16,6 +16,7 @@ export STREAM_WIDTH STREAM_HEIGHT
 
 PORT="${QURAN_WEB_PORT:-4177}"; RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"
 GR="$RUNTIME/groups/$GROUP"; mkdir -p "$GR" "$LOG_DIR"
+source "$BASE_DIR/scripts/process_guard.sh"
 WEB_PID="$RUNTIME/quran-web.pid"; XVFB_PID="$GR/xvfb.pid"; CHROME_PID="$GR/chrome.pid"
 SIG="$STREAM_WIDTH:$STREAM_HEIGHT:$LAYOUT:$PROFILE_REQ:${GROUP_AUDIO_MASTER:-0}"
 web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null | grep -q '"ok":true'; }
@@ -26,11 +27,9 @@ web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev
   flock -x 9
   if ! web_healthy; then
     oldpid="$(cat "$WEB_PID" 2>/dev/null || true)"
-    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+    if quran_owned_pid "$oldpid" web ""; then
       echo "[$(date '+%F %T')] web PID $oldpid is alive but unhealthy; restarting." >>"$LOG_DIR/web.log"
-      kill "$oldpid" 2>/dev/null || true
-      for _ in $(seq 1 10); do kill -0 "$oldpid" 2>/dev/null || break; sleep .2; done
-      kill -9 "$oldpid" 2>/dev/null || true
+      quran_stop_owned_pid "$oldpid" web "" || true
     fi
     rm -f "$WEB_PID"
 
@@ -48,7 +47,7 @@ web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev
     done
     if [ "$ready" -ne 1 ]; then
       badpid="$(cat "$WEB_PID" 2>/dev/null || true)"
-      [ -n "$badpid" ] && kill "$badpid" 2>/dev/null || true
+      quran_stop_owned_pid "$badpid" web "" || true
       rm -f "$WEB_PID"
       echo "[$(date '+%F %T')] ERROR Quran web API failed to become healthy on port $PORT." >>"$LOG_DIR/web.log"
       exit 1
@@ -66,18 +65,22 @@ fi
 
 # Geometry/profile/master change => recreate this group's native X/Chrome canvas.
 if [ "$(cat "$GR/signature" 2>/dev/null)" != "$SIG" ]; then
-  kill "$(cat "$CHROME_PID" 2>/dev/null)" 2>/dev/null || true
-  kill "$(cat "$XVFB_PID" 2>/dev/null)" 2>/dev/null || true
+  quran_stop_owned_pid "$(cat "$CHROME_PID" 2>/dev/null || true)" browser "$GR" || true
+  quran_stop_owned_pid "$(cat "$XVFB_PID" 2>/dev/null || true)" xvfb "$DISPLAY_NUM" || true
   rm -f "$CHROME_PID" "$XVFB_PID"
   sleep .5
 fi
 
-if ! kill -0 "$(cat "$XVFB_PID" 2>/dev/null)" 2>/dev/null; then
+xpid="$(cat "$XVFB_PID" 2>/dev/null || true)"
+if ! quran_owned_pid "$xpid" xvfb "$DISPLAY_NUM"; then
+  rm -f "$XVFB_PID"
   Xvfb ":$DISPLAY_NUM" -screen 0 "${STREAM_WIDTH}x${STREAM_HEIGHT}x24" -nolisten tcp >"$LOG_DIR/xvfb_${GROUP}.log" 2>&1 &
   echo $! > "$XVFB_PID"; sleep 1
 fi
 
-if ! kill -0 "$(cat "$CHROME_PID" 2>/dev/null)" 2>/dev/null; then
+cpid="$(cat "$CHROME_PID" 2>/dev/null || true)"
+if ! quran_owned_pid "$cpid" browser "$GR"; then
+  rm -f "$CHROME_PID"
   BROWSER_BIN="${CHROME_BIN:-}"
   [ -n "$BROWSER_BIN" ] || BROWSER_BIN="$(command -v google-chrome || command -v chromium-browser || command -v chromium || echo chromium)"
   CITIES="${GOVERNOR_CITY_LIMIT:-$(quran_layout_default_cities "$LAYOUT" "$PROFILE_REQ")}"; LOWFX=0
