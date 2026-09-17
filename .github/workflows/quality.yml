@@ -78,18 +78,19 @@ jobs:
           grep -q 'AUDIO="pulse"' scripts/preflight.sh
 
           # Each worker must explicitly own its FFmpeg child for clean fallback
-          # restarts; watchdog health is tied to that exact PID and heartbeat.
+          # restarts; watchdog and health-check status are tied to that exact PID
+          # plus a fresh progress heartbeat.
           grep -q 'FFMPEG_PID_FILE=.*ffmpeg.pid' scripts/stream_worker.sh
           grep -q "trap 'cleanup_worker; exit 0' INT TERM" scripts/stream_worker.sh
           grep -q 'cat "$d/ffmpeg.pid"' scripts/watchdog.sh
           grep -q 'now-mt' scripts/watchdog.sh
+          grep -q 'cat "$d/ffmpeg.pid"' scripts/health_check.sh
+          grep -q 'comm="$(ps -p "$fp" -o comm=' scripts/health_check.sh
 
       - name: Validate platform ingest contracts
         shell: bash
         run: |
           set -euo pipefail
-          # KICK's current official ingest contract: H.264, Main profile, CBR,
-          # <=1080p60, <=8000 kbps, stereo audio up to 48 kHz, 2s keyframes.
           source scripts/platforms.sh
           test "$(quran_target_max_profile kick)" = balanced
           test "$(quran_target_max_fps kick)" -le 60
@@ -98,22 +99,14 @@ jobs:
           test "$(quran_target_h264_profile kick)" = main
           test "$(quran_target_audio_rate kick)" -le 48000
           test "$(quran_target_audio_channels kick)" = 2
-
-          # Twitch currently caps AAC audio at 160 kbps.
           test "$(quran_target_max_audio_bitrate_kbit twitch)" -le 160
           grep -q 'quran_target_max_audio_bitrate_kbit' scripts/stream_worker.sh
           grep -q -- '-b:a "$GROUP_AUDIO_BITRATE"' scripts/stream_worker.sh
-
-          # A custom H.264 Baseline requirement must not be ignored by a shared
-          # encoder that defaults to High/Main for other destinations.
           CUSTOM1_H264_PROFILE=baseline
           export CUSTOM1_H264_PROFILE
           test "$(quran_target_h264_profile custom1)" = baseline
           grep -q 'h264_profile_rank' scripts/stream_worker.sh
           grep -q 'H264_PROFILE_RANK' scripts/stream_worker.sh
-
-          # Platform/governor FPS changes must control the frame-count GOP. Fixed
-          # keyint values in x264-params would override the adaptive 2-second GOP.
           if grep -nE 'X264_PARAMS=.*(keyint|min-keyint)=' scripts/hardware_profile.sh; then
             echo 'Fixed keyint in X264_PARAMS overrides the adaptive 2-second GOP.'
             exit 1
@@ -134,17 +127,13 @@ jobs:
             sleep .1
           done
           test "$ready" = 1
-
           initial="$(curl -fsS http://127.0.0.1:8898/api/playback)"
           node -e 'const p=JSON.parse(process.argv[1]); if(p.revision!==0) process.exit(1)' "$initial"
-
           code="$(curl -sS -o /tmp/playback.json -w '%{http_code}' -X POST -H 'X-Quran-Master: 1' 'http://127.0.0.1:8898/api/playback?surah=2&ayah=282')"
           test "$code" = 200
           node -e 'const p=JSON.parse(require("fs").readFileSync("/tmp/playback.json","utf8")); if(p.surah!==2||p.ayah!==282||p.revision!==1) process.exit(1)'
-
           mirrored="$(curl -fsS http://127.0.0.1:8898/api/playback)"
           node -e 'const p=JSON.parse(process.argv[1]); if(p.surah!==2||p.ayah!==282||p.revision!==1) process.exit(1)' "$mirrored"
-
           denied="$(curl -sS -o /dev/null -w '%{http_code}' -X POST 'http://127.0.0.1:8898/api/playback?surah=1&ayah=1')"
           test "$denied" = 403
           invalid="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'X-Quran-Master: 1' 'http://127.0.0.1:8898/api/playback?surah=114&ayah=7')"
