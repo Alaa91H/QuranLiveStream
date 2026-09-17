@@ -21,7 +21,7 @@ case "${1:-}" in
     echo "Stopping stream..."
     mkdir -p "$BASE/runtime"
     touch "$BASE/runtime/broadcast_stopped.flag"
-    systemctl --user stop "$SERVICE" 2>/dev/null || true
+    systemctl --user stop "$SERVICE" quran-live-youtube.service quran-live-tiktok.service 2>/dev/null || true
     "$BASE/scripts/stop_ui.sh" >/dev/null 2>&1 || true
     echo "Stopped."
     ;;
@@ -37,7 +37,7 @@ case "${1:-}" in
     echo "--- adaptive telemetry ---"
     cat "$BASE/runtime/load.status" 2>/dev/null || echo "No telemetry yet."
     echo "--- selected targets ---"
-    grep -E '^STREAM_TARGETS=' "$BASE/.env" 2>/dev/null || echo "STREAM_TARGETS=yellow default: youtube"
+    grep -E '^STREAM_TARGETS=' "$BASE/.env" 2>/dev/null || echo "STREAM_TARGETS=youtube (default)"
     echo "--- ffmpeg ---"
     ps -eo pid,pcpu,pmem,args | grep '[f]fmpeg' || echo "No ffmpeg process."
     ;;
