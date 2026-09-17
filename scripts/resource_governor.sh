@@ -24,11 +24,26 @@ sample_cpu_pct(){
   [ $((t2-t1)) -gt 0 ] && awk "BEGIN{printf \"%.0f\",100*(1-($i2-$i1)/($t2-$t1))}" || echo 0
 }
 sample_mem_pct(){ awk '/MemTotal:/{t=$2}/MemAvailable:/{a=$2}END{if(t>0)printf "%.0f",100*(t-a)/t;else print 0}' /proc/meminfo; }
+active_group_count(){
+  local n=0
+  if [ -f "$RUNTIME/active_profile.env" ]; then
+    n="$(awk -F= '$1=="ACTIVE_GROUPS"{print $2; exit}' "$RUNTIME/active_profile.env" 2>/dev/null || true)"
+  fi
+  case "$n" in ''|*[!0-9]*) n=0;; esac
+  echo "$n"
+}
 slowest_speed(){
-  local f s min=""
-  for f in "$RUNTIME"/groups/*/ffmpeg.progress; do
-    [ -f "$f" ] || continue
-    s="$(grep '^speed=' "$f" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d 'x' || true)"
+  local expected i d pid s min="" now mt
+  expected="$(active_group_count)"; now="$(date +%s)"
+  [ "$expected" -gt 0 ] || { echo 1.00; return; }
+  for i in $(seq 0 $((expected-1))); do
+    d="$RUNTIME/groups/g$i"
+    pid="$(cat "$d/ffmpeg.pid" 2>/dev/null || true)"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || continue
+    [ -f "$d/ffmpeg.progress" ] || continue
+    mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"
+    [ "$((now-mt))" -le 30 ] || continue
+    s="$(grep '^speed=' "$d/ffmpeg.progress" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d 'x' || true)"
     [[ "$s" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
     if [ -z "$min" ] || awk -v a="$s" -v b="$min" 'BEGIN{exit !(a<b)}'; then min="$s"; fi
   done
@@ -85,7 +100,7 @@ cycle(){
   local soft="${RESOURCE_CPU_SOFT:-78}" hard="${RESOURCE_CPU_HARD:-88}" msoft="${RESOURCE_RAM_SOFT:-82}" mhard="${RESOURCE_RAM_HARD:-89}"
   local lowcpu="${RESOURCE_CPU_LOW:-52}" lowmem="${RESOURCE_RAM_LOW:-68}" minspd="${RESOURCE_SPEED_SOFT:-0.97}"
   local hits="${RESOURCE_HIGH_HITS:-3}" lowhits="${RESOURCE_LOW_HITS:-60}" cooldown="${RESOURCE_COOLDOWN_SEC:-240}"
-  groups="$(find "$RUNTIME/groups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+  groups="$(active_group_count)"
   printf '{"ts":%s,"cpu_pct":%s,"mem_pct":%s,"slowest_speed_x":"%s","profile":"%s","ceiling":"%s","groups":%s,"fps_cap":"%s","high_hits":%s,"low_hits":%s}\n' \
     "$now" "$cpu" "$mem" "$speed" "$active" "$ceiling" "${groups:-0}" "${GOVERNOR_FPS_CAP:-}" "$high" "$low" > "$STATUS"
 
