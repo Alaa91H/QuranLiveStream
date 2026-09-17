@@ -25,7 +25,8 @@ LIGHT_ONLY=0
 
 LOG_DIR="$BASE_DIR/logs"
 RUNTIME="$BASE_DIR/runtime"
-mkdir -p "$LOG_DIR" "$RUNTIME"
+AUDIO_DIR="$BASE_DIR/web/assets/audio"
+mkdir -p "$LOG_DIR" "$RUNTIME" "$AUDIO_DIR"
 LOG="$LOG_DIR/prime_static.log"
 
 log() {
@@ -82,18 +83,35 @@ elif [ "${PRIME_AUDIO:-1}" = "0" ]; then
 elif [ -f "$RUNTIME/prime-audio.done" ]; then
   log "Audio: already primed, skipping."
 else
-  COUNT=$(find "$BASE_DIR/web/assets/audio" -maxdepth 1 -name '*.mp3' -size +1000c 2>/dev/null | wc -l)
+  COUNT=$(find "$AUDIO_DIR" -maxdepth 1 -name '*.mp3' -size +1000c 2>/dev/null | wc -l | tr -d ' ')
+  case "$COUNT" in ''|*[!0-9]*) COUNT=0;; esac
   if [ "$COUNT" -ge 6236 ]; then
     touch "$RUNTIME/prime-audio.done"
     log "Audio: full set already on disk ($COUNT files)."
   elif pgrep -f "ffmpeg.*(x11grab|current\.mp4)" >/dev/null 2>&1; then
     log "Audio: encoder active, refusing bulk download during stream ($COUNT/6236). Run control.sh prepare while stopped."
   else
-    log "Audio: priming full recitation in background ($COUNT/6236, ~3.5GB, no encoder running)..."
-    # niced + backgrounded: ingress-bound and nothing else encodes right now.
-    nice -n 10 nohup "$BASE_DIR/scripts/download_all_recitations.sh" >>"$LOG" 2>&1 &
-    echo $! >"$RUNTIME/prime-audio.pid"
-    log "Audio: downloader pid $(cat "$RUNTIME/prime-audio.pid"), progress in $LOG."
+    # Never trade a bandwidth optimization for a full filesystem. Estimate the
+    # remaining corpus from the documented ~3.5GB set and keep a safety reserve.
+    FREE_MB="$(df -Pm "$AUDIO_DIR" 2>/dev/null | awk 'NR==2{print $4}' || echo 0)"
+    USED_MB="$(du -sm "$AUDIO_DIR" 2>/dev/null | awk '{print $1}' || echo 0)"
+    case "$FREE_MB" in ''|*[!0-9]*) FREE_MB=0;; esac
+    case "$USED_MB" in ''|*[!0-9]*) USED_MB=0;; esac
+    EST_TOTAL_MB="${AUDIO_PRIME_EST_MB:-3800}"; RESERVE_MB="${AUDIO_PRIME_RESERVE_MB:-768}"
+    case "$EST_TOTAL_MB" in ''|*[!0-9]*) EST_TOTAL_MB=3800;; esac
+    case "$RESERVE_MB" in ''|*[!0-9]*) RESERVE_MB=768;; esac
+    REMAIN_MB=$((EST_TOTAL_MB-USED_MB)); [ "$REMAIN_MB" -lt 0 ] && REMAIN_MB=0
+    NEED_MB=$((REMAIN_MB+RESERVE_MB))
+    if [ "$FREE_MB" -lt "$NEED_MB" ]; then
+      log "Audio: bulk prime skipped; ${FREE_MB}MB free but ~${NEED_MB}MB is needed (remaining estimate + reserve). Runtime will keep using local hits/CDN fallback."
+    elif command -v flock >/dev/null 2>&1 && ! flock -n "$RUNTIME/audio-download.lock" -c true 2>/dev/null; then
+      log "Audio: downloader already active; refusing duplicate bulk job."
+    else
+      log "Audio: priming full recitation in background ($COUNT/6236, free=${FREE_MB}MB, reserve=${RESERVE_MB}MB)..."
+      nice -n 10 nohup "$BASE_DIR/scripts/download_all_recitations.sh" >>"$LOG" 2>&1 &
+      echo $! >"$RUNTIME/prime-audio.pid"
+      log "Audio: downloader pid $(cat "$RUNTIME/prime-audio.pid"), progress in $LOG."
+    fi
   fi
 fi
 
