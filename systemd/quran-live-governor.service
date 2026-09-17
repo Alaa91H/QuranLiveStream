@@ -1,0 +1,18 @@
+[Unit]
+Description=QuranLiveStream Dynamic Resource Governor
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@QURAN_HOME@
+EnvironmentFile=-@QURAN_HOME@/.env
+ExecStart=@QURAN_HOME@/scripts/resource_governor.sh
+Restart=always
+RestartSec=5
+Nice=10
+OOMScoreAdjust=300
+StandardOutput=append:@QURAN_HOME@/logs/systemd_governor.log
+StandardError=append:@QURAN_HOME@/logs/systemd_governor.log
+
+[Install]
+WantedBy=default.target
