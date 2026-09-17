@@ -468,7 +468,7 @@ async function countrySnapshot(c) {
 
 async function capitalsPage(url) {
   const requested = Number(url.searchParams.get('page') || 0);
-  const size = Math.min(Math.max(Number(url.searchParams.get('size') || 6), 5), 18);
+  const size = Math.min(Math.max(Number(url.searchParams.get('size') || 6), 1), 18);
   const totalPages = Math.ceil(capitals.length / size);
   const page = ((requested % totalPages) + totalPages) % totalPages;
   const slice = capitals.slice(page * size, page * size + size);
