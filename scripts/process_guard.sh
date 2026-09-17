@@ -49,6 +49,12 @@ quran_owned_pid() {
       # Every managed worker includes its private -progress path in argv.
       [[ " $cmd " == *" -progress $marker "* ]]
       ;;
+    master)
+      case "$comm" in bash|sh) ;; *) return 1;; esac
+      [ -n "$marker" ] || return 1
+      # Match the exact orchestrator script path as an argv token.
+      [[ " $cmd " == *" $marker "* ]]
+      ;;
     *) return 1 ;;
   esac
 }
