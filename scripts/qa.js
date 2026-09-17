@@ -120,6 +120,8 @@ function getJson(url) {
     assert(sr.status === 200 && sr.data.length === 114, 'Surahs endpoint failed');
     const capitals = await getJson(`http://127.0.0.1:${port}/api/capitals?page=0&size=5`);
     assert(capitals.status === 200 && capitals.data.cities.length === 5 && capitals.data.total === 195, 'Capitals endpoint failed');
+    const oneCity = await getJson(`http://127.0.0.1:${port}/api/capitals?page=0&size=1`);
+    assert(oneCity.status === 200 && oneCity.data.size === 1 && oneCity.data.cities.length === 1, 'One-city governor emergency floor failed');
     const q282 = await getJson(`http://127.0.0.1:${port}/api/quran?surah=2&ayah=282`);
     assert(q282.status === 200 && q282.data.ayah === 282, 'Longest Ayah fixture failed');
     assert(q282.data.arabic && q282.data.translation && q282.data.tafsirAr && q282.data.tafsirEn, 'Longest Ayah fields incomplete');
