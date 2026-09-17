@@ -12,53 +12,37 @@ source "$BASE_DIR/scripts/platforms.sh"
 quran_targets_load
 RUNTIME="$BASE_DIR/runtime"; mkdir -p "$RUNTIME"
 PLAN="$RUNTIME/stream_plan.tsv"; SUMMARY="$RUNTIME/stream_plan.txt"
-
 rank(){ quran_profile_rank "$1"; }
 prof(){ quran_profile_at "$1"; }
 
-# Hardware/benchmark ceiling. A manual STREAM_PROFILE can lower the ceiling,
-# but universal mode never lets it force a weak host above measured capacity.
 REQUESTED="${STREAM_PROFILE:-auto}"
 unset STREAM_PROFILE || true
 source "$BASE_DIR/scripts/hardware_profile.sh"
-HW_PROFILE="$PROFILE"; HW_RANK="$(rank "$HW_PROFILE")"
-GLOBAL_RANK="$HW_RANK"
+HW_PROFILE="$PROFILE"; HW_RANK="$(rank "$HW_PROFILE")"; GLOBAL_RANK="$HW_RANK"
 if [ -n "$REQUESTED" ] && [ "${REQUESTED,,}" != "auto" ]; then
-  REQ_RANK="$(rank "${REQUESTED,,}")"
-  [ "$REQ_RANK" -lt "$GLOBAL_RANK" ] && GLOBAL_RANK="$REQ_RANK"
+  REQ_RANK="$(rank "${REQUESTED,,}")"; [ "$REQ_RANK" -lt "$GLOBAL_RANK" ] && GLOBAL_RANK="$REQ_RANK"
 fi
 if [ -f "$RUNTIME/governor.env" ] && [ "${RESOURCE_GOVERNOR:-1}" != "0" ]; then
   source "$RUNTIME/governor.env" 2>/dev/null || true
-  if [ -n "${GOVERNOR_PROFILE:-}" ]; then
-    GOV_RANK="$(rank "$GOVERNOR_PROFILE")"
-    [ "$GOV_RANK" -lt "$GLOBAL_RANK" ] && GLOBAL_RANK="$GOV_RANK"
-  fi
+  if [ -n "${GOVERNOR_PROFILE:-}" ]; then GOV_RANK="$(rank "$GOVERNOR_PROFILE")"; [ "$GOV_RANK" -lt "$GLOBAL_RANK" ] && GLOBAL_RANK="$GOV_RANK"; fi
 fi
 GLOBAL_PROFILE="$(prof "$GLOBAL_RANK")"
 
-CPU_N="$(nproc 2>/dev/null || echo 1)"
-RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo 1024)"
-case "$CPU_N" in ''|*[!0-9]*)CPU_N=1;; esac
-case "$RAM_MB" in ''|*[!0-9]*)RAM_MB=1024;; esac
-
-# Never treat an encoder listed by ffmpeg as proof of a usable GPU. Preflight
-# performs a real smoke test and records the only trusted acceleration verdict.
+CPU_N="$(nproc 2>/dev/null || echo 1)"; RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}' || echo 1024)"
+case "$CPU_N" in ''|*[!0-9]*)CPU_N=1;; esac; case "$RAM_MB" in ''|*[!0-9]*)RAM_MB=1024;; esac
 GPU_VERIFIED=0
 if [ -f "$RUNTIME/preflight.env" ]; then
   source "$RUNTIME/preflight.env" 2>/dev/null || true
-  case "${PREFLIGHT_HW_OK:-}" in nvenc|vaapi|qsv) GPU_VERIFIED=1;; esac
+  case "${PREFLIGHT_HW_OK:-}" in
+    nvenc) GPU_VERIFIED=1 ;;
+    vaapi|qsv) [ "${HW_ALLOW_EXPERIMENTAL:-0}" = "1" ] && GPU_VERIFIED=1 || true ;;
+  esac
 fi
 
 POLICY="${QUALITY_POLICY:-auto}"
 if [ "$POLICY" = "auto" ]; then
-  # Split same-aspect destinations into platform-specific quality groups only
-  # when there is substantial verified headroom. Weak hosts prefer sharing.
   if { [ "$GPU_VERIFIED" -eq 1 ] && [ "$RAM_MB" -ge 4096 ] && [ "$GLOBAL_RANK" -ge 3 ]; } || \
-     { [ "$CPU_N" -ge 8 ] && [ "$RAM_MB" -ge 8192 ] && [ "$GLOBAL_RANK" -ge 4 ]; }; then
-    POLICY=maximize
-  else
-    POLICY=efficient
-  fi
+     { [ "$CPU_N" -ge 8 ] && [ "$RAM_MB" -ge 8192 ] && [ "$GLOBAL_RANK" -ge 4 ]; }; then POLICY=maximize; else POLICY=efficient; fi
 fi
 case "$POLICY" in efficient|maximize) ;; *) POLICY=efficient;; esac
 
@@ -74,37 +58,25 @@ done < <(quran_targets_lines)
 declare -A G_TARGETS G_RANK G_LAYOUT G_CODEC
 ORDER=()
 for t in "${TARGETS[@]}"; do
-  layout="$(quran_target_layout "$t")"
-  maxp="$(quran_target_max_profile "$t")"; maxr="$(rank "$maxp")"
-  desired="$GLOBAL_RANK"; [ "$maxr" -lt "$desired" ] && desired="$maxr"
-  codec="$(quran_target_codec "$t")"
+  layout="$(quran_target_layout "$t")"; maxp="$(quran_target_max_profile "$t")"; maxr="$(rank "$maxp")"
+  desired="$GLOBAL_RANK"; [ "$maxr" -lt "$desired" ] && desired="$maxr"; codec="$(quran_target_codec "$t")"
   if [ "$POLICY" = "maximize" ]; then key="${layout}:${codec}:${desired}"; else key="${layout}:${codec}"; fi
   if [ -z "${G_TARGETS[$key]+x}" ]; then
     ORDER+=("$key"); G_TARGETS[$key]="$t"; G_RANK[$key]="$desired"; G_LAYOUT[$key]="$layout"; G_CODEC[$key]="$codec"
   else
-    G_TARGETS[$key]="${G_TARGETS[$key]},$t"
-    [ "$desired" -lt "${G_RANK[$key]}" ] && G_RANK[$key]="$desired"
+    G_TARGETS[$key]="${G_TARGETS[$key]},$t"; [ "$desired" -lt "${G_RANK[$key]}" ] && G_RANK[$key]="$desired"
   fi
 done
 
-: > "$PLAN"; : > "$SUMMARY"
-DISPLAY_BASE="${QURAN_DISPLAY_BASE:-90}"
-i=0
+: > "$PLAN"; : > "$SUMMARY"; DISPLAY_BASE="${QURAN_DISPLAY_BASE:-90}"; i=0
 for key in "${ORDER[@]}"; do
-  profile="$(prof "${G_RANK[$key]}")"; layout="${G_LAYOUT[$key]}"; codec="${G_CODEC[$key]}"
-  display=$((DISPLAY_BASE+i)); group="g$i"; targets="${G_TARGETS[$key]}"
+  profile="$(prof "${G_RANK[$key]}")"; layout="${G_LAYOUT[$key]}"; codec="${G_CODEC[$key]}"; display=$((DISPLAY_BASE+i)); group="g$i"; targets="${G_TARGETS[$key]}"
   read -r w h < <(quran_profile_dimensions "$profile" "$layout")
   printf '%s|%s|%s|%s|%s|%s\n' "$group" "$layout" "$profile" "$codec" "$display" "$targets" >> "$PLAN"
   printf '%s: %s %sx%s %s codec=%s targets=%s\n' "$group" "$layout" "$w" "$h" "$profile" "$codec" "$targets" >> "$SUMMARY"
   i=$((i+1))
 done
-
 {
-  echo "policy=$POLICY"
-  echo "hardware_ceiling=$HW_PROFILE"
-  echo "active_ceiling=$GLOBAL_PROFILE"
-  echo "verified_gpu=$GPU_VERIFIED"
-  echo "groups=$i"
-  cat "$SUMMARY"
+  echo "policy=$POLICY"; echo "hardware_ceiling=$HW_PROFILE"; echo "active_ceiling=$GLOBAL_PROFILE"; echo "verified_gpu=$GPU_VERIFIED"; echo "groups=$i"; cat "$SUMMARY"
 } > "$SUMMARY.tmp" && mv "$SUMMARY.tmp" "$SUMMARY"
 cat "$SUMMARY"
