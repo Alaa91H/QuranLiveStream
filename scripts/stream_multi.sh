@@ -9,7 +9,7 @@ BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BASE_DIR"
 [ -f .env ] && { set -a; source .env 2>/dev/null; set +a; } || true
 source "$BASE_DIR/scripts/platforms.sh"; quran_targets_load
 RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; mkdir -p "$RUNTIME/groups" "$LOG_DIR"
-LOG="$LOG_DIR/stream.log"; STOP_FLAG="$RUNTIME/broadcast_stopped.flag"
+LOG="$LOG_DIR/stream.log"; STOP_FLAG="$RUNTIME/broadcast_stopped.flag"; MASTER_PID_FILE="$RUNTIME/stream_multi.pid"
 log(){ echo "[$(date '+%F %T')] [MASTER] $*" | tee -a "$LOG"; }
 
 # Preflight independently resolves the safe hardware profile. Do NOT source the
@@ -28,12 +28,13 @@ GROUP_COUNT="$(wc -l < "$PLAN" | tr -d ' ')"; TOTAL_TARGETS=0
 while IFS='|' read -r _ _ _ _ _ targets; do IFS=',' read -ra a <<< "$targets"; TOTAL_TARGETS=$((TOTAL_TARGETS+${#a[@]})); done < "$PLAN"
 export STREAM_GROUP_COUNT="$GROUP_COUNT" STREAM_TOTAL_TARGETS="$TOTAL_TARGETS"
 
-rm -f "$STOP_FLAG"; touch "$RUNTIME/stream_active.flag"
+rm -f "$STOP_FLAG"; touch "$RUNTIME/stream_active.flag"; echo "$$" > "$MASTER_PID_FILE"
 {
   echo "ACTIVE_TARGETS=$STREAM_TARGETS"
   echo "ACTIVE_GROUPS=$GROUP_COUNT"
   echo "ACTIVE_TARGET_COUNT=$TOTAL_TARGETS"
   echo "ACTIVE_AUDIO=$AUDIO_MODE"
+  echo "ACTIVE_MASTER_PID=$$"
   echo "ACTIVE_TS=$(date +%s)"
   echo "ACTIVE_PLAN=$PLAN"
 } > "$RUNTIME/active_profile.env"
@@ -43,6 +44,8 @@ cleanup(){
   [ "$CLEANED" -eq 0 ] || return 0
   CLEANED=1
   touch "$STOP_FLAG"; rm -f "$RUNTIME/stream_active.flag"
+  current_master="$(cat "$MASTER_PID_FILE" 2>/dev/null || true)"
+  [ "$current_master" = "$$" ] && rm -f "$MASTER_PID_FILE" || true
   for p in "${PIDS[@]:-}"; do
     [[ "$p" =~ ^[0-9]+$ ]] || continue
     kill "$p" 2>/dev/null || true
