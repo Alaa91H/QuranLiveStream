@@ -27,20 +27,27 @@ if [ -f "$RUNTIME/active_profile.env" ]; then
 fi
 case "$EXPECTED" in ''|*[!0-9]*)EXPECTED=1;; esac
 
-GROUP_OK=0; BROKEN=""
+GROUP_OK=0; BROKEN=""; now="$(date +%s)"
 for i in $(seq 0 $((EXPECTED-1))); do
   d="$RUNTIME/groups/g$i"; ok=1
   [ -f "$d/worker.env" ] || ok=0
   cp="$(cat "$d/chrome.pid" 2>/dev/null || true)"; xp="$(cat "$d/xvfb.pid" 2>/dev/null || true)"
   [ -n "$cp" ] && kill -0 "$cp" 2>/dev/null || ok=0
   [ -n "$xp" ] && kill -0 "$xp" 2>/dev/null || ok=0
-  if pgrep -af ffmpeg 2>/dev/null | grep -q "${d}/ffmpeg.progress\|:$((90+i))\.0"; then :; else
-    # Fallback: each active worker has one progress file updated by FFmpeg.
-    if [ -f "$d/ffmpeg.progress" ]; then
-      mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"; now="$(date +%s)"
-      [ "$((now-mt))" -le 30 ] || ok=0
-    else ok=0; fi
+
+  # A live FFmpeg PID alone is not proof of a healthy encoder: a blocked x11,
+  # audio, network or muxer path can leave the process alive indefinitely. The
+  # -progress file is FFmpeg's actual heartbeat, so require it to stay fresh.
+  ffmpeg_alive=0
+  pgrep -af ffmpeg 2>/dev/null | grep -q "${d}/ffmpeg.progress\|:$((90+i))\.0" && ffmpeg_alive=1 || true
+  [ "$ffmpeg_alive" -eq 1 ] || ok=0
+  if [ -f "$d/ffmpeg.progress" ]; then
+    mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"
+    [ "$((now-mt))" -le 30 ] || ok=0
+  else
+    ok=0
   fi
+
   if [ "$ok" -eq 1 ]; then GROUP_OK=$((GROUP_OK+1)); else BROKEN="${BROKEN}${BROKEN:+,}g$i"; fi
 done
 
