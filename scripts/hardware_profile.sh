@@ -92,7 +92,9 @@ case "$PROFILE" in
     FFMPEG_PRESET="ultrafast"
     FFMPEG_TUNE="zerolatency"
     FFMPEG_THREADS=1
-    X264_PARAMS="ref=1:mixed-refs=0:trellis=0:cabac=0:8x8dct=0:weightp=0:me=dia:subme=0:analyse=i4x4:scenecut=0:keyint=20:min-keyint=20:no-scenecut:no-chroma-me:merange=8:nal-hrd=none:filler=0:force-cfr=1:fast-pskip=1:dct-decimate=1"
+    # Keep low-cost x264 analysis, but let stream_worker set GOP from the final
+    # adaptive FPS so keyframes remain exactly two seconds apart after downshift.
+    X264_PARAMS="ref=1:mixed-refs=0:trellis=0:cabac=0:8x8dct=0:weightp=0:me=dia:subme=0:analyse=i4x4:scenecut=0:no-scenecut:no-chroma-me:merange=8:nal-hrd=none:filler=0:force-cfr=1:fast-pskip=1:dct-decimate=1"
     DEFAULT_AUDIO_MODE="file"
     NODE_MEM_MB=96
     CHROME_MEM_MB=128
@@ -119,10 +121,11 @@ case "$PROFILE" in
     # Verified extra savings on top of ultrafast+zerolatency (which already set
     # cabac=0 ref=1 bframes=0 deblock=off aq-mode=0 weightp=0 8x8dct=0 me=dia
     # subme=0 trellis=0 mixed-refs=0 mbtree=0 scenecut=0 partitions=none):
-    # fixed GOP (no I-spikes), no chroma-ME, tight dia range, no filler.
+    # no chroma-ME, tight dia range, no filler. Adaptive GOP is supplied by
+    # stream_worker after platform/governor FPS caps are applied.
     # Deliberately NOT included: no-psy (softens glyph edges for ~0% CPU),
     # profile baseline (worse text compression at same CBR), threads>1.
-    X264_PARAMS="ref=1:mixed-refs=0:trellis=0:cabac=0:8x8dct=0:weightp=0:me=dia:subme=0:analyse=i4x4:scenecut=0:keyint=20:min-keyint=20:no-scenecut:no-chroma-me:merange=8:nal-hrd=none:filler=0:force-cfr=1:fast-pskip=1:dct-decimate=1"
+    X264_PARAMS="ref=1:mixed-refs=0:trellis=0:cabac=0:8x8dct=0:weightp=0:me=dia:subme=0:analyse=i4x4:scenecut=0:no-scenecut:no-chroma-me:merange=8:nal-hrd=none:filler=0:force-cfr=1:fast-pskip=1:dct-decimate=1"
     DEFAULT_AUDIO_MODE="file"
     NODE_MEM_MB=112
     CHROME_MEM_MB=160
@@ -258,42 +261,3 @@ export VCODEC
 # Extra x264 tuning (micro profile only; empty = preset defaults elsewhere)
 X264_PARAMS="${X264_PARAMS:-}"
 export X264_PARAMS
-
-# Audio path: "pulse" = capture browser via PulseAudio sink (synced, heavier),
-# "file" = concat local recitation mp3s (no PulseAudio; needs downloaded audio,
-# playlist order matches UI surah 1..114 order; tiny drift possible, daily
-# restart resyncs). Explicit $AUDIO_MODE in .env always wins.
-DEFAULT_AUDIO_MODE="${DEFAULT_AUDIO_MODE:-pulse}"
-AUDIO_MODE="${AUDIO_MODE:-$DEFAULT_AUDIO_MODE}"
-export AUDIO_MODE
-
-# Audio channels: micro streams dual-mono (centered recitation, YouTube-safe),
-# others keep stereo. Explicit $AUDIO_CHANNELS in .env always wins.
-AUDIO_CHANNELS="${AUDIO_CHANNELS:-2}"
-export AUDIO_CHANNELS
-
-# CPU pinning (taskset): on 2+ CPUs isolate the realtime encode (core 0) from
-# the browser (last core) to cut cache contention on shared vCPUs. Empty =
-# no pinning. Explicit $TASKSET_FFMPEG/$TASKSET_CHROME in .env always win.
-# Single CPU or missing taskset binary => pinning silently disabled at use site.
-if [ "${CPU_CORES:-0}" -ge 2 ]; then
-  TASKSET_FFMPEG="${TASKSET_FFMPEG:-0}"
-  TASKSET_CHROME="${TASKSET_CHROME:-$((CPU_CORES - 1))}"
-else
-  TASKSET_FFMPEG="${TASKSET_FFMPEG:-}"
-  TASKSET_CHROME="${TASKSET_CHROME:-}"
-fi
-export TASKSET_FFMPEG TASKSET_CHROME
-
-if [ "${1:-}" == "--show" ]; then
-  echo "=========================================================="
-  echo "Quran Live Stream — Auto-Configured Streaming Profile"
-  echo "=========================================================="
-  echo "Detected Specs : ${CPU_CORES} CPU Core(s), ${TOTAL_RAM_MB} MB RAM (NVENC: $HAS_NVENC, VAAPI: $HAS_VAAPI, QSV: $HAS_QSV${HOST_CC:+, CC: $HOST_CC})"
-  echo "Active Profile : $PROFILE_NAME"
-  echo "Resolution     : ${STREAM_WIDTH}x${STREAM_HEIGHT} @ ${STREAM_FPS}fps"
-  echo "Video Encoding : $VCODEC (Preset: $FFMPEG_PRESET, Bitrate: $VIDEO_BITRATE, Max: $MAX_BITRATE)"
-  echo "Audio Encoding : AAC ${AUDIO_CHANNELS}ch ($AUDIO_BITRATE @ ${AUDIO_SAMPLERATE}Hz, source: $AUDIO_MODE)"
-  echo "Memory Budget  : Node.js max ${NODE_MEM_MB}MB | Chromium max ${CHROME_MEM_MB}MB"
-  echo "=========================================================="
-fi
