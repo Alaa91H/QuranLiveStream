@@ -12,8 +12,12 @@ Restart=always
 RestartSec=5
 TimeoutStopSec=30
 KillMode=control-group
-Nice=-2
-OOMScoreAdjust=-200
+# This is intentionally a user unit. Negative Nice/OOMScoreAdjust values need
+# privileges or resource limits that ordinary VPS user managers do not have.
+# CPU/memory safety and prioritization are enforced portably by the cgroup
+# envelope below plus the live resource governor.
+Nice=0
+OOMScoreAdjust=0
 CPUAccounting=true
 MemoryAccounting=true
 CPUQuota=@CPU_QUOTA@
