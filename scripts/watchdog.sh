@@ -62,7 +62,9 @@ if [ "$WEB_OK" -eq 0 ] || [ "$GROUP_OK" -lt "$EXPECTED" ]; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user restart quran-live.service || true
   else
-    pkill -f 'stream_multi.sh' 2>/dev/null || true
+    mpid="$(cat "$RUNTIME/stream_multi.pid" 2>/dev/null || true)"
+    quran_stop_owned_pid "$mpid" master "$BASE_DIR/scripts/stream_multi.sh" || true
+    rm -f "$RUNTIME/stream_multi.pid"
     nohup "$BASE_DIR/scripts/stream_multi.sh" >>"$LOG_DIR/stream.log" 2>&1 &
   fi
 fi
