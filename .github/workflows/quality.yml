@@ -36,6 +36,8 @@ jobs:
           node --check web/app.js
           node --check web/server.js
           node --check web/platform-layout.js
+          node --check web/playback-hook.js
+          node --check web/playback-sync.js
           for f in scripts/*.js; do
             [ -f "$f" ] && node --check "$f"
           done
@@ -54,12 +56,33 @@ jobs:
           fi
           grep -q 'platform.css' web/index.html
           grep -q 'platform-layout.js' web/index.html
+          grep -q 'playback-sync.js' web/index.html
+          grep -q 'playback-hook.js' scripts/broadcast_ui_group.sh
+          grep -q 'master=$MASTER' scripts/broadcast_ui_group.sh
           grep -q 'layout="portrait"\|portrait)' scripts/platforms.sh
           grep -q 'quran-live.service' scripts/health_check.sh
           if grep -nE 'quran-live-(youtube|tiktok)\.service|stream_(youtube|tiktok)' scripts/health_check.sh; then
             echo 'health_check.sh still references the retired split-service architecture.'
             exit 1
           fi
+
+          # Broadcast audio must share the master browser timeline. The old
+          # independent concat playlist is allowed as a utility, never as an
+          # FFmpeg live input because it can drift from the displayed ayah.
+          grep -q 'quran_sink.monitor' scripts/stream_worker.sh
+          if grep -q 'build_audio_playlist.sh' scripts/stream_worker.sh; then
+            echo 'Live worker still contains the unsynchronized concat playlist path.'
+            exit 1
+          fi
+          grep -q 'PREFLIGHT_AUDIO=$AUDIO' scripts/preflight.sh
+          grep -q 'AUDIO="pulse"' scripts/preflight.sh
+
+          # Each worker must explicitly own its FFmpeg child for clean fallback
+          # restarts; watchdog health is tied to that exact PID and heartbeat.
+          grep -q 'FFMPEG_PID_FILE=.*ffmpeg.pid' scripts/stream_worker.sh
+          grep -q "trap 'cleanup_worker; exit 0' INT TERM" scripts/stream_worker.sh
+          grep -q 'cat "$d/ffmpeg.pid"' scripts/watchdog.sh
+          grep -q 'now-mt' scripts/watchdog.sh
 
       - name: Validate platform ingest contracts
         shell: bash
@@ -97,6 +120,35 @@ jobs:
           fi
           grep -q 'GOP=$((FPS\*2))' scripts/stream_worker.sh
           grep -q -- '-g "$GOP" -keyint_min "$GOP"' scripts/stream_worker.sh
+
+      - name: Validate playback state bus
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=8898 QURAN_OFFLINE=1 node --require "$PWD/web/playback-hook.js" web/server.js >/tmp/quran-playback-test.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          ready=0
+          for _ in $(seq 1 40); do
+            if curl -fsS --max-time 1 http://127.0.0.1:8898/api/health >/dev/null 2>&1; then ready=1; break; fi
+            sleep .1
+          done
+          test "$ready" = 1
+
+          initial="$(curl -fsS http://127.0.0.1:8898/api/playback)"
+          node -e 'const p=JSON.parse(process.argv[1]); if(p.revision!==0) process.exit(1)' "$initial"
+
+          code="$(curl -sS -o /tmp/playback.json -w '%{http_code}' -X POST -H 'X-Quran-Master: 1' 'http://127.0.0.1:8898/api/playback?surah=2&ayah=282')"
+          test "$code" = 200
+          node -e 'const p=JSON.parse(require("fs").readFileSync("/tmp/playback.json","utf8")); if(p.surah!==2||p.ayah!==282||p.revision!==1) process.exit(1)'
+
+          mirrored="$(curl -fsS http://127.0.0.1:8898/api/playback)"
+          node -e 'const p=JSON.parse(process.argv[1]); if(p.surah!==2||p.ayah!==282||p.revision!==1) process.exit(1)' "$mirrored"
+
+          denied="$(curl -sS -o /dev/null -w '%{http_code}' -X POST 'http://127.0.0.1:8898/api/playback?surah=1&ayah=1')"
+          test "$denied" = 403
+          invalid="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'X-Quran-Master: 1' 'http://127.0.0.1:8898/api/playback?surah=114&ayah=7')"
+          test "$invalid" = 400
 
       - name: Validate adaptive ceiling invariants
         shell: bash
