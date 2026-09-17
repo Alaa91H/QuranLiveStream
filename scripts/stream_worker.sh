@@ -55,14 +55,26 @@ for t in "${TARGETS[@]}"; do uri="$(quran_target_uri "$t" 2>/dev/null||true)"; [
 TEE_EXTRA=(); if ffmpeg -hide_banner -h muxer=tee 2>/dev/null|grep -q use_fifo; then TEE_EXTRA=(-use_fifo 1 -fifo_options "attempt_recovery=1:recover_any_error=1:recovery_wait_time=5:drop_pkts_on_overflow=1"); fi
 
 [ -f "$RUNTIME/preflight.env" ]&&source "$RUNTIME/preflight.env" 2>/dev/null||true
-VAAPI_PRE=(); VF="format=yuv420p"; PIXFMT=(-pix_fmt yuv420p); VARGS=(); ACTIVE_ENCODER=cpu; SW_PRESET="$(software_preset "$PROFILE_REQ")"
+VAAPI_PRE=(); VF="format=yuv420p"; PIXFMT=(-pix_fmt yuv420p); VARGS=(); ACTIVE_ENCODER=cpu; OUTPUT_CODEC=h264; SW_PRESET="$(software_preset "$PROFILE_REQ")"
+# Low-resource presets historically disabled HRD/filler. Strip those conflicting
+# keys here and append strict CBR signalling so platform contracts are preserved
+# regardless of the adaptive profile selected by the governor.
+X264_CBR_PARAMS="${X264_PARAMS:-}"
+X264_CBR_PARAMS="${X264_CBR_PARAMS//nal-hrd=none/}"
+X264_CBR_PARAMS="${X264_CBR_PARAMS//filler=0/}"
+while [[ "$X264_CBR_PARAMS" == *::* ]]; do X264_CBR_PARAMS="${X264_CBR_PARAMS//::/:}"; done
+X264_CBR_PARAMS="${X264_CBR_PARAMS#:}"; X264_CBR_PARAMS="${X264_CBR_PARAMS%:}"
+X264_CBR_PARAMS="${X264_CBR_PARAMS:+${X264_CBR_PARAMS}:}nal-hrd=cbr:filler=1"
 if [ "$CODEC_REQ" = h264 ]; then
  if [ "${PREFLIGHT_HW_OK:-}" = nvenc ]; then VARGS=(-c:v h264_nvenc -preset p4 -tune hq -rc cbr -profile:v "$H264_PROFILE"); ACTIVE_ENCODER=nvenc
  elif [ "${PREFLIGHT_HW_OK:-}" = vaapi ]&&[ "${HW_ALLOW_EXPERIMENTAL:-0}" = 1 ]; then VAAPI_PRE=(-vaapi_device /dev/dri/renderD128); VF="format=nv12,hwupload"; PIXFMT=(); VARGS=(-c:v h264_vaapi -bf 2 -profile:v "$H264_PROFILE"); ACTIVE_ENCODER=vaapi
- else VARGS=(-c:v libx264 -preset "$SW_PRESET" -tune zerolatency -threads "$FFMPEG_THREADS" -profile:v "$H264_PROFILE"); [ -n "${X264_PARAMS:-}" ]&&VARGS+=(-x264-params "$X264_PARAMS"); fi
+ else VARGS=(-c:v libx264 -preset "$SW_PRESET" -tune zerolatency -threads "$FFMPEG_THREADS" -profile:v "$H264_PROFILE" -x264-params "$X264_CBR_PARAMS"); fi
 elif [ "$CODEC_REQ" = h265 ]||[ "$CODEC_REQ" = hevc ]; then
+ OUTPUT_CODEC=hevc
  if ffmpeg -hide_banner -encoders 2>/dev/null|grep -q ' hevc_nvenc '&&[ "${PREFLIGHT_HW_OK:-}" = nvenc ]; then VARGS=(-c:v hevc_nvenc -preset p4 -rc cbr); ACTIVE_ENCODER=nvenc-hevc; else VARGS=(-c:v libx265 -preset ultrafast -threads "$FFMPEG_THREADS"); ACTIVE_ENCODER=cpu-hevc; fi
-else log "Unsupported requested codec '$CODEC_REQ'; falling back to h264."; VARGS=(-c:v libx264 -preset "$SW_PRESET" -tune zerolatency -threads "$FFMPEG_THREADS" -profile:v "$H264_PROFILE"); fi
+else log "Unsupported requested codec '$CODEC_REQ'; falling back to h264."; VARGS=(-c:v libx264 -preset "$SW_PRESET" -tune zerolatency -threads "$FFMPEG_THREADS" -profile:v "$H264_PROFILE" -x264-params "$X264_CBR_PARAMS"); fi
+RATE_ARGS=(-b:v "$VIDEO_BITRATE" -maxrate "$MAX_BITRATE" -bufsize "$BUF_SIZE")
+[ "$OUTPUT_CODEC" = h264 ] && RATE_ARGS+=(-minrate "$VIDEO_BITRATE")
 
 "$BASE_DIR/scripts/broadcast_ui_group.sh" "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$DISPLAY_NUM" >>"$LOG" 2>&1||exit 1
 # The browser master owns recitation timing and prefers local MP3 files. Every
@@ -73,7 +85,7 @@ FPSMODE=(-fps_mode cfr); ffmpeg -hide_banner -h full 2>/dev/null|grep -q -- -fps
 printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nFPS=%s\nVIDEO_KBIT=%s\nENCODER=%s\nH264_PROFILE=%s\nAUDIO_KBIT=%s\nAUDIO_RATE=%s\nAUDIO_CHANNELS=%s\nTARGETS=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$FPS" "$VIDEO_KBIT" "$ACTIVE_ENCODER" "$H264_PROFILE" "$GROUP_AUDIO_KBIT" "$GROUP_AUDIO_RATE" "$GROUP_AUDIO_CHANNELS" "$TARGET_CSV" > "$GR/worker.env"
 while [ ! -f "$STOP_FLAG" ]; do
  rm -f "$PROGRESS" "$FFMPEG_PID_FILE"; log "Native encode ${STREAM_WIDTH}x${STREAM_HEIGHT}@${FPS} ${VIDEO_BITRATE} encoder=$ACTIVE_ENCODER h264_profile=$H264_PROFILE audio=${GROUP_AUDIO_BITRATE}/${GROUP_AUDIO_RATE}Hz/${GROUP_AUDIO_CHANNELS}ch targets=$TARGET_SUMMARY"; set +e
- ffmpeg -hide_banner -loglevel warning -nostdin "${VAAPI_PRE[@]}" -f x11grab -framerate "$FPS" -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" -draw_mouse 0 -thread_queue_size 64 -probesize 32k -analyzeduration 0 -i ":$DISPLAY_NUM.0" "${AUDIO_INPUT[@]}" -map 0:v:0 -map 1:a:0 -vf "$VF" "${VARGS[@]}" "${PIXFMT[@]}" -b:v "$VIDEO_BITRATE" -maxrate "$MAX_BITRATE" -bufsize "$BUF_SIZE" -g "$GOP" -keyint_min "$GOP" -sc_threshold 0 -r "$FPS" "${FPSMODE[@]}" -c:a aac -b:a "$GROUP_AUDIO_BITRATE" -ar "$GROUP_AUDIO_RATE" -ac "$GROUP_AUDIO_CHANNELS" -af "aresample=${GROUP_AUDIO_RATE}:async=1:first_pts=0" -flags +global_header -progress "$PROGRESS" -stats_period 5 -f tee "${TEE_EXTRA[@]}" "$TEE_SPEC" >>"$LOG" 2>&1 &
+ ffmpeg -hide_banner -loglevel warning -nostdin "${VAAPI_PRE[@]}" -f x11grab -framerate "$FPS" -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" -draw_mouse 0 -thread_queue_size 64 -probesize 32k -analyzeduration 0 -i ":$DISPLAY_NUM.0" "${AUDIO_INPUT[@]}" -map 0:v:0 -map 1:a:0 -vf "$VF" "${VARGS[@]}" "${PIXFMT[@]}" "${RATE_ARGS[@]}" -g "$GOP" -keyint_min "$GOP" -sc_threshold 0 -r "$FPS" "${FPSMODE[@]}" -c:a aac -b:a "$GROUP_AUDIO_BITRATE" -ar "$GROUP_AUDIO_RATE" -ac "$GROUP_AUDIO_CHANNELS" -af "aresample=${GROUP_AUDIO_RATE}:async=1:first_pts=0" -flags +global_header -progress "$PROGRESS" -stats_period 5 -f tee "${TEE_EXTRA[@]}" "$TEE_SPEC" >>"$LOG" 2>&1 &
  FFMPEG_PID=$!; echo "$FFMPEG_PID" > "$FFMPEG_PID_FILE"; wait "$FFMPEG_PID"; EC=$?; FFMPEG_PID=""; rm -f "$FFMPEG_PID_FILE"; set -e
  [ -f "$STOP_FLAG" ]&&break; log "FFmpeg exited $EC; retry in 4s."; sleep 4
 done
