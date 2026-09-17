@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
+# ==============================================================================
 # QuranLiveStream — read-only health probe for the coordinated universal stack.
 # Recovery remains centralized in watchdog.sh; this command reports state and
 # invokes the watchdog only when the live stack is demonstrably unhealthy.
+# ==============================================================================
 set -uo pipefail
-BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$BASE_DIR"
 [ -f .env ] && { set -a; source .env 2>/dev/null; set +a; } || true
 RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; mkdir -p "$RUNTIME" "$LOG_DIR"
+source "$BASE_DIR/scripts/process_guard.sh"
 LOG="$LOG_DIR/health.log"; PORT="${QURAN_WEB_PORT:-4177}"
 log(){ echo "[$(date '+%F %T')] [HEALTH] $*" | tee -a "$LOG"; }
 
@@ -43,19 +46,15 @@ NOW="$(date +%s)"; GOOD=0
 for i in $(seq 0 $((EXPECTED-1))); do
   d="$RUNTIME/groups/g$i"; ok=1
   [ -s "$d/worker.env" ] || ok=0
+  display="$(sed -n 's/^DISPLAY=//p' "$d/ui.env" 2>/dev/null | head -1 | tr -cd '0-9')"
   cp="$(cat "$d/chrome.pid" 2>/dev/null || true)"; xp="$(cat "$d/xvfb.pid" 2>/dev/null || true)"
-  [ -n "$cp" ] && kill -0 "$cp" 2>/dev/null || ok=0
-  [ -n "$xp" ] && kill -0 "$xp" 2>/dev/null || ok=0
+  quran_owned_pid "$cp" browser "$d" || ok=0
+  [ -n "$display" ] && quran_owned_pid "$xp" xvfb "$display" || ok=0
 
-  # Match watchdog semantics: a recent progress file is insufficient if FFmpeg
-  # has already exited (or its PID was reused by another process). Verify the
-  # exact worker-owned PID and process identity before declaring the group live.
-  fp="$(cat "$d/ffmpeg.pid" 2>/dev/null || true)"; ffmpeg_alive=0
-  if [[ "$fp" =~ ^[0-9]+$ ]] && kill -0 "$fp" 2>/dev/null; then
-    comm="$(ps -p "$fp" -o comm= 2>/dev/null | tr -d '[:space:]' || true)"
-    [ "$comm" = "ffmpeg" ] && ffmpeg_alive=1 || true
-  fi
-  [ "$ffmpeg_alive" -eq 1 ] || ok=0
+  # Match watchdog semantics exactly: the encoder PID must still be ffmpeg and
+  # must own this group's private -progress path before its heartbeat is trusted.
+  fp="$(cat "$d/ffmpeg.pid" 2>/dev/null || true)"
+  quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress" || ok=0
 
   if [ -f "$d/ffmpeg.progress" ]; then
     mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"
@@ -67,7 +66,7 @@ for i in $(seq 0 $((EXPECTED-1))); do
   if [ "$ok" -eq 1 ]; then
     GOOD=$((GOOD+1)); log "g$i healthy."
   else
-    log "FAIL g$i incomplete, encoder-dead, or stale."
+    log "FAIL g$i incomplete, wrong-process, encoder-dead, or stale."
   fi
 done
 [ "$GOOD" -eq "$EXPECTED" ] || FAIL=1
