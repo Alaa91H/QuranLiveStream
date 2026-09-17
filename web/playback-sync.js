@@ -1,9 +1,12 @@
 // Shared recitation position for multi-canvas broadcasts.
-// group0 (master=1) owns audio/timing; every follower mirrors its verse only.
+// group0 (master=1) owns audio/timing; master=0 followers mirror its verse.
+// Pages opened without an explicit role remain standalone previews.
 (() => {
   const params = new URLSearchParams(location.search);
   const isQa = params.get('qa') === '1' || params.get('test') === 'longest';
-  const isMaster = params.get('master') !== '0'; // normal browser preview stays standalone
+  const role = params.get('master');
+  const isMaster = role === '1';
+  const isFollower = role === '0';
   let lastRevision = 0;
   let followerBusy = false;
 
@@ -40,7 +43,7 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    if (isQa) return;
+    if (isQa || (!isMaster && !isFollower)) return;
 
     if (isMaster) {
       // Publish immediately before the audible track starts, so follower canvases
