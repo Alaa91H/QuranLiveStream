@@ -5,7 +5,7 @@ set -uo pipefail
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GROUP="${1:?group}"; LAYOUT="${2:?layout}"; PROFILE_REQ="${3:?profile}"; CODEC_REQ="${4:?codec}"; DISPLAY_NUM="${5:?display}"; TARGET_CSV="${6:?targets}"
 cd "$BASE_DIR"; [ -f .env ] && { set -a; source .env 2>/dev/null; set +a; } || true
-source "$BASE_DIR/scripts/platforms.sh"; STREAM_PROFILE="$PROFILE_REQ"; export STREAM_PROFILE
+source "$BASE_DIR/scripts/platforms.sh"; source "$BASE_DIR/scripts/process_guard.sh"; STREAM_PROFILE="$PROFILE_REQ"; export STREAM_PROFILE
 source "$BASE_DIR/scripts/hardware_profile.sh"; read -r STREAM_WIDTH STREAM_HEIGHT < <(quran_profile_dimensions "$PROFILE_REQ" "$LAYOUT")
 RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; GR="$RUNTIME/groups/$GROUP"; mkdir -p "$GR" "$LOG_DIR"
 LOG="$LOG_DIR/stream_${GROUP}.log"; PROGRESS="$GR/ffmpeg.progress"; FFMPEG_PID_FILE="$GR/ffmpeg.pid"; STOP_FLAG="$RUNTIME/broadcast_stopped.flag"; FFMPEG_PID=""
@@ -17,11 +17,9 @@ h264_profile_rank(){ case "${1:-high}" in baseline)echo 0;;main)echo 1;;*)echo 2
 cleanup_worker(){
   local pid="${FFMPEG_PID:-}"
   [ -n "$pid" ] || pid="$(cat "$FFMPEG_PID_FILE" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    kill "$pid" 2>/dev/null || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; sleep .2; done
-    kill -9 "$pid" 2>/dev/null || true
-  fi
+  # A TERM can arrive before this run replaces a stale pidfile. Never signal
+  # that number unless it is still FFmpeg for this group's private progress file.
+  quran_stop_owned_pid "$pid" ffmpeg "$PROGRESS" || true
   rm -f "$FFMPEG_PID_FILE"
 }
 trap 'cleanup_worker; exit 0' INT TERM

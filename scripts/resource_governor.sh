@@ -8,6 +8,7 @@ set -uo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"; cd "$BASE_DIR"
 [ -f .env ] && { set -a; source .env 2>/dev/null; set +a; } || true
 source "$BASE_DIR/scripts/platforms.sh"
+source "$BASE_DIR/scripts/process_guard.sh"
 RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; mkdir -p "$RUNTIME" "$LOG_DIR"
 LOG="$LOG_DIR/resource_governor.log"; STATE="$RUNTIME/governor.state"; GOV_ENV="$RUNTIME/governor.env"; STATUS="$RUNTIME/resources.json"
 INTERVAL="${RESOURCE_INTERVAL_SEC:-10}"
@@ -39,7 +40,7 @@ slowest_speed(){
   for i in $(seq 0 $((expected-1))); do
     d="$RUNTIME/groups/g$i"
     pid="$(cat "$d/ffmpeg.pid" 2>/dev/null || true)"
-    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || continue
+    quran_owned_pid "$pid" ffmpeg "$d/ffmpeg.progress" || continue
     [ -f "$d/ffmpeg.progress" ] || continue
     mt="$(stat -c%Y "$d/ffmpeg.progress" 2>/dev/null || echo 0)"
     [ "$((now-mt))" -le 30 ] || continue

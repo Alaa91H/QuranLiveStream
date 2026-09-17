@@ -88,6 +88,8 @@ jobs:
           grep -q 'quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress"' scripts/watchdog.sh
           grep -q 'quran_owned_pid "$cp" browser "$d"' scripts/health_check.sh
           grep -q 'quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress"' scripts/health_check.sh
+          grep -q 'quran_owned_pid "$pid" ffmpeg "$d/ffmpeg.progress"' scripts/resource_governor.sh
+          grep -q 'quran_stop_owned_pid "$pid" ffmpeg "$PROGRESS"' scripts/stream_worker.sh
           grep -q 'quran_owned_pid "$xpid" xvfb "$DISPLAY_NUM"' scripts/broadcast_ui_group.sh
           grep -q 'quran_owned_pid "$cpid" browser "$GR"' scripts/broadcast_ui_group.sh
           if grep -q 'fuser -k' scripts/stop_ui.sh; then
