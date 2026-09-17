@@ -8,6 +8,7 @@ set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BASE_DIR"
 LOG_DIR="$BASE_DIR/logs"; CACHE_DIR="$BASE_DIR/web/.cache"; RUNTIME="$BASE_DIR/runtime"
 mkdir -p "$LOG_DIR" "$RUNTIME"
+source "$BASE_DIR/scripts/process_guard.sh"
 MAINT_LOG="$LOG_DIR/maintenance.log"
 log(){ echo "[$(date '+%F %T')] [MAINT] $*" | tee -a "$MAINT_LOG"; }
 NEED_RESTART=0; RETUNE=0; WAS_ACTIVE=0
@@ -57,7 +58,10 @@ if stale "$RUNTIME/host.env" "${RETUNE_MAX_AGE_SEC:-604800}" || stale "$RUNTIME/
     WAS_ACTIVE=1; log "Weekly retune due; stopping coordinated stream for a clean benchmark."
     systemctl --user stop quran-live.service 2>/dev/null || true
   elif [ -f "$RUNTIME/stream_active.flag" ]; then
-    WAS_ACTIVE=1; touch "$RUNTIME/broadcast_stopped.flag"; pkill -f 'stream_multi.sh' 2>/dev/null || true
+    WAS_ACTIVE=1; touch "$RUNTIME/broadcast_stopped.flag"
+    mpid="$(cat "$RUNTIME/stream_multi.pid" 2>/dev/null || true)"
+    quran_stop_owned_pid "$mpid" master "$BASE_DIR/scripts/stream_multi.sh" || true
+    rm -f "$RUNTIME/stream_multi.pid"
   fi
   "$BASE_DIR/scripts/stop_ui.sh" >/dev/null 2>&1 || true
   sleep 1
@@ -75,14 +79,17 @@ if [ "$NEED_RESTART" -eq 1 ] && [ ! -f "$RUNTIME/broadcast_stopped.flag" ]; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user restart quran-live.service 2>/dev/null || true
   elif [ "$WAS_ACTIVE" -eq 1 ]; then
-    rm -f "$RUNTIME/broadcast_stopped.flag"
     nohup "$BASE_DIR/scripts/stream_multi.sh" >>"$LOG_DIR/stream.log" 2>&1 &
   fi
 elif [ "$RETUNE" -eq 1 ] && [ "$WAS_ACTIVE" -eq 1 ]; then
-  # A stop flag may have been created by fallback path; resume only if it was
-  # not an intentional user stop before maintenance began.
+  # Fallback retune sets a temporary stop flag. Resume only the stream that was
+  # active before maintenance, and do not route through systemd-only control.sh.
   rm -f "$RUNTIME/broadcast_stopped.flag"
-  "$BASE_DIR/scripts/control.sh" start >/dev/null 2>&1 || true
+  if command -v systemctl >/dev/null 2>&1; then
+    "$BASE_DIR/scripts/control.sh" start >/dev/null 2>&1 || true
+  else
+    nohup "$BASE_DIR/scripts/stream_multi.sh" >>"$LOG_DIR/stream.log" 2>&1 &
+  fi
 else
   log "No restart needed; healthy live session left untouched."
 fi
