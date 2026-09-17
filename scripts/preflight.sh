@@ -115,7 +115,17 @@ if command -v pactl >/dev/null 2>&1; then
   fi
 fi
 if [ "$PULSE_READY" -eq 1 ]; then
-  log "Audio: PulseAudio daemon reachable."
+  # Provision the monitor before workers launch concurrently, so follower
+  # encoders never race group0 and fail their first Pulse input open.
+  if ! pactl list short sinks 2>/dev/null | grep -q '[[:space:]]quran_sink[[:space:]]'; then
+    pactl load-module module-null-sink sink_name=quran_sink sink_properties=device.description=QuranSink >/dev/null 2>&1 || true
+  fi
+  if pactl list short sinks 2>/dev/null | grep -q '[[:space:]]quran_sink[[:space:]]'; then
+    log "Audio: PulseAudio quran_sink monitor ready."
+  else
+    log "HARD FAIL: PulseAudio is reachable but quran_sink could not be created."
+    FAIL=1
+  fi
 else
   log "HARD FAIL: PulseAudio is required for synchronized recitation/display capture (run scripts/install_deps.sh)."
   FAIL=1
