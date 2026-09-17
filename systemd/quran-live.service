@@ -1,0 +1,20 @@
+[Unit]
+Description=QuranLiveStream Universal Multi-Platform Broadcaster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@QURAN_HOME@
+EnvironmentFile=-@QURAN_HOME@/.env
+ExecStart=@QURAN_HOME@/scripts/stream_multi.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+Nice=-5
+OOMScoreAdjust=-300
+StandardOutput=append:@QURAN_HOME@/logs/systemd_stream.log
+StandardError=append:@QURAN_HOME@/logs/systemd_stream.log
+
+[Install]
+WantedBy=default.target
