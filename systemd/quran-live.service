@@ -1,5 +1,5 @@
 [Unit]
-Description=QuranLiveStream Universal Multi-Platform Broadcaster
+Description=QuranLiveStream Universal Native Multi-Platform Broadcaster
 After=network-online.target
 Wants=network-online.target
 
@@ -11,8 +11,15 @@ ExecStart=@QURAN_HOME@/scripts/stream_multi.sh
 Restart=always
 RestartSec=5
 TimeoutStopSec=30
-Nice=-5
-OOMScoreAdjust=-300
+KillMode=control-group
+Nice=-2
+OOMScoreAdjust=-200
+CPUAccounting=true
+MemoryAccounting=true
+CPUQuota=@CPU_QUOTA@
+MemoryHigh=88%
+MemoryMax=94%
+TasksMax=384
 StandardOutput=append:@QURAN_HOME@/logs/systemd_stream.log
 StandardError=append:@QURAN_HOME@/logs/systemd_stream.log
 
