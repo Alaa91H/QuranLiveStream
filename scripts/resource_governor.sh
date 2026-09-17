@@ -5,7 +5,7 @@
 # global quality ceiling with hysteresis and never upgrades beyond benchmark.
 # ==============================================================================
 set -uo pipefail
-BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BASE_DIR"
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"; cd "$BASE_DIR"
 [ -f .env ] && { set -a; source .env 2>/dev/null; set +a; } || true
 source "$BASE_DIR/scripts/platforms.sh"
 RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; mkdir -p "$RUNTIME" "$LOG_DIR"
