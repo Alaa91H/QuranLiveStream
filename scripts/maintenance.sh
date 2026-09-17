@@ -1,122 +1,90 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ==============================================================================
-# Quran Live Stream — Autonomous Scheduled Maintenance & Optimizer
-# Best run daily during minimum global viewership window (e.g. 03:30 AM).
-# Handles Git updates, cache purges, log rotation, and zero-downtime memory refresh.
+# QuranLiveStream — low-disruption scheduled maintenance
+# Updates/cleans/retunes only when needed. No forced page-cache drops and no
+# unconditional daily stream restart.
 # ==============================================================================
 set -euo pipefail
-BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$BASE_DIR"
-
-LOG_DIR="$BASE_DIR/logs"
-CACHE_DIR="$BASE_DIR/web/.cache"
-mkdir -p "$LOG_DIR"
+BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"; cd "$BASE_DIR"
+LOG_DIR="$BASE_DIR/logs"; CACHE_DIR="$BASE_DIR/web/.cache"; RUNTIME="$BASE_DIR/runtime"
+mkdir -p "$LOG_DIR" "$RUNTIME"
 MAINT_LOG="$LOG_DIR/maintenance.log"
+log(){ echo "[$(date '+%F %T')] [MAINT] $*" | tee -a "$MAINT_LOG"; }
+NEED_RESTART=0; RETUNE=0; WAS_ACTIVE=0
 
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [MAINTENANCE] $*" | tee -a "$MAINT_LOG"
-}
+log "=== maintenance start ==="
 
-log "=== Starting Scheduled Maintenance Run ==="
-
-# 1. Autonomous Git Update (if enabled or repository is clean)
-if [ -d "$BASE_DIR/.git" ]; then
-  log "Checking for repository updates on origin/main..."
-  if git status --porcelain 2>/dev/null | grep -q '^[ MADRCU]'; then
-    log "Working tree has uncommitted local edits; skipping automatic git pull to preserve local modifications."
+# 1) Fast-forward main only when the server checkout is clean.
+if [ -d .git ]; then
+  if git status --porcelain 2>/dev/null | grep -q .; then
+    log "Working tree has local edits; skipping git update."
   else
-    git fetch origin main >/dev/null 2>&1 || true
-    BEHIND_COUNT=$(git rev-list HEAD..origin/main --count 2>/dev/null || echo 0)
-    if [ "$BEHIND_COUNT" -gt 0 ]; then
-      log "New updates detected ($BEHIND_COUNT commit(s) behind). Applying updates cleanly..."
-      git pull --ff-only origin main >>"$MAINT_LOG" 2>&1 || log "Warning: Git pull encountered conflict; will retry next cycle."
-    else
-      log "Repository is up-to-date."
+    git fetch origin main >>"$MAINT_LOG" 2>&1 || true
+    BEHIND="$(git rev-list HEAD..origin/main --count 2>/dev/null || echo 0)"
+    case "$BEHIND" in ''|*[!0-9]*)BEHIND=0;; esac
+    if [ "$BEHIND" -gt 0 ]; then
+      log "Applying $BEHIND main commit(s)."
+      if git pull --ff-only origin main >>"$MAINT_LOG" 2>&1; then NEED_RESTART=1; else log "Git update failed; keeping running revision."; fi
     fi
   fi
 fi
 
-# 2. Clean stale cache files older than 7 days
+# 2) Bounded cache/log cleanup. Never touch current media or kernel caches.
 if [ -d "$CACHE_DIR" ]; then
-  log "Pruning disk cache entries older than 7 days..."
-  DELETED_COUNT=$(find "$CACHE_DIR" -type f -name "*.json" -mtime +7 -delete -print 2>/dev/null | wc -l || echo 0)
-  log "Cleaned $DELETED_COUNT stale cache files."
+  DELETED="$(find "$CACHE_DIR" -type f -name '*.json' -mtime +7 -delete -print 2>/dev/null | wc -l || echo 0)"
+  log "Stale API cache removed: $DELETED file(s)."
 fi
-
-# 3. Log Rotation (keep log sizes <= 5MB: 1GB boxes cannot afford 15MB logs)
-log "Rotating system logs..."
-for log_file in "$LOG_DIR"/*.log; do
-  [ -f "$log_file" ] || continue
-  SIZE_KB=$(du -k "$log_file" | cut -f1)
-  if [ "$SIZE_KB" -gt 5120 ]; then # 5MB
-    log "Rotating $(basename "$log_file") (${SIZE_KB}KB)..."
-    mv "$log_file" "${log_file}.old"
-    gzip -f "${log_file}.old" 2>/dev/null || true
-    touch "$log_file"
+for f in "$LOG_DIR"/*.log; do
+  [ -f "$f" ] || continue
+  kb="$(du -k "$f" 2>/dev/null | awk '{print $1}' || echo 0)"; case "$kb" in ''|*[!0-9]*)kb=0;; esac
+  if [ "$kb" -gt "${LOG_ROTATE_KB:-5120}" ]; then
+    mv "$f" "$f.old" && gzip -f "$f.old" 2>/dev/null || true
+    : > "$f"; log "Rotated $(basename "$f")."
   fi
 done
+find "$LOG_DIR" -type f -name '*.old.gz' -mtime +14 -delete 2>/dev/null || true
 
-# 3b. Weekly adaptive retune (continuous improvement with hardware changes).
-# benchmark/probe skip internally when fresher than 7 days, so most nights this
-# is a no-op. On stale weeks the stream is STOPPED first: the benchmark must
-# measure clean capacity, not fight the running encoder (a contended reading
-# would wrongly downgrade the profile). Gap ~2 min, once a week, at 03:30.
-env_stale() {
+stale(){
   [ ! -f "$1" ] && return 0
-  local mt now
-  mt="$(stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0)"
-  case "$mt" in ''|*[!0-9]*) return 0 ;; esac
-  now="$(date +%s)"
-  [ "$((now - mt))" -gt "$((7 * 86400))" ]
+  mt="$(stat -c%Y "$1" 2>/dev/null || stat -f%m "$1" 2>/dev/null || echo 0)"; case "$mt" in ''|*[!0-9]*)return 0;; esac
+  [ "$(( $(date +%s)-mt ))" -gt "${2:-604800}" ]
 }
-if env_stale "$BASE_DIR/runtime/host.env" || env_stale "$BASE_DIR/runtime/net.env" || env_stale "$BASE_DIR/runtime/preflight.env"; then
-  RETUNE_DID_STOP=0
-  if [ -f "$BASE_DIR/runtime/broadcast_stopped.flag" ]; then
-    log "Weekly retune: broadcast intentionally stopped, measuring on the idle box (nothing will be started)."
-  else
-    log "Weekly retune due: stopping stream for a clean measurement window..."
-    if command -v systemctl >/dev/null 2>&1; then
-      systemctl --user stop quran-live-youtube.service quran-live-tiktok.service 2>/dev/null || true
-    fi
-    "$BASE_DIR/scripts/stop_ui.sh" >/dev/null 2>&1 || true
-    sleep 2
-    RETUNE_DID_STOP=1
-  fi
-  "$BASE_DIR/scripts/benchmark_host.sh" --force >>"$MAINT_LOG" 2>&1 || log "WARNING: benchmark failed, keeping previous profile."
-  "$BASE_DIR/scripts/probe_egress.sh" --force >>"$MAINT_LOG" 2>&1 || log "WARNING: egress probe failed, bitrate stays uncapped."
-  rm -f "$BASE_DIR/runtime/preflight.env"
-  log "Retune finished; service restart below picks up the new profile."
-fi
 
-# 4. Clean Memory & Service Refresh (Releases accumulated Chromium/Node memory)
-log "Performing graceful broadcast refresh during low-viewership window..."
-if [ -f "$BASE_DIR/runtime/broadcast_stopped.flag" ]; then
-  log "Broadcast is intentionally stopped, skipping stream/UI restart."
-elif [ "${RETUNE_DID_STOP:-0}" = "1" ]; then
-  log "Resuming stream after weekly retune with the new profile..."
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user start quran-live-youtube.service 2>/dev/null || true
-    log "Stream service started cleanly via systemd."
-  else
-    "$BASE_DIR/scripts/stop_ui.sh" >/dev/null 2>&1 || true
-    sleep 2
-    "$BASE_DIR/scripts/broadcast_ui.sh" >>"$LOG_DIR/web.log" 2>&1 &
-    log "Broadcast UI restarted cleanly."
+# 3) Expensive benchmark must run on an idle box, only when stale (default 7d).
+if stale "$RUNTIME/host.env" "${RETUNE_MAX_AGE_SEC:-604800}" || stale "$RUNTIME/net.env" "${RETUNE_MAX_AGE_SEC:-604800}"; then
+  RETUNE=1
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet quran-live.service 2>/dev/null; then
+    WAS_ACTIVE=1; log "Weekly retune due; stopping coordinated stream for a clean benchmark."
+    systemctl --user stop quran-live.service 2>/dev/null || true
+  elif [ -f "$RUNTIME/stream_active.flag" ]; then
+    WAS_ACTIVE=1; touch "$RUNTIME/broadcast_stopped.flag"; pkill -f 'stream_multi.sh' 2>/dev/null || true
   fi
-elif command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet quran-live-youtube.service 2>/dev/null; then
-  systemctl --user restart quran-live-youtube.service
-  log "Stream service restarted cleanly via systemd."
-else
   "$BASE_DIR/scripts/stop_ui.sh" >/dev/null 2>&1 || true
-  sleep 2
-  "$BASE_DIR/scripts/broadcast_ui.sh" >>"$LOG_DIR/web.log" 2>&1 &
-  log "Broadcast UI restarted cleanly."
+  sleep 1
+  "$BASE_DIR/scripts/benchmark_host.sh" --force >>"$MAINT_LOG" 2>&1 || log "Benchmark failed; previous safe behavior remains available."
+  "$BASE_DIR/scripts/probe_egress.sh" --force >>"$MAINT_LOG" 2>&1 || log "Egress probe failed; network guard keeps prior/fallback behavior."
+  rm -f "$RUNTIME/preflight.env" "$RUNTIME/governor.env" "$RUNTIME/governor.state"
+  NEED_RESTART=1
 fi
 
-# 5. Drop Kernel filesystem page caches if root
-if [ "$(id -u)" -eq 0 ]; then
-  sync && echo 3 > /proc/sys/vm/drop_caches
-  log "Kernel pagecache compacted. System RAM is fully refreshed."
+# 4) Restart only when code/benchmark changed, or if explicitly requested.
+if [ "${MAINTENANCE_DAILY_RESTART:-0}" = "1" ]; then NEED_RESTART=1; fi
+if [ "$NEED_RESTART" -eq 1 ] && [ ! -f "$RUNTIME/broadcast_stopped.flag" ]; then
+  log "Reloading coordinated universal service with updated/tuned settings."
+  "$BASE_DIR/scripts/control.sh" install-units >/dev/null 2>&1 || true
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user restart quran-live.service 2>/dev/null || true
+  elif [ "$WAS_ACTIVE" -eq 1 ]; then
+    rm -f "$RUNTIME/broadcast_stopped.flag"
+    nohup "$BASE_DIR/scripts/stream_multi.sh" >>"$LOG_DIR/stream.log" 2>&1 &
+  fi
+elif [ "$RETUNE" -eq 1 ] && [ "$WAS_ACTIVE" -eq 1 ]; then
+  # A stop flag may have been created by fallback path; resume only if it was
+  # not an intentional user stop before maintenance began.
+  rm -f "$RUNTIME/broadcast_stopped.flag"
+  "$BASE_DIR/scripts/control.sh" start >/dev/null 2>&1 || true
+else
+  log "No restart needed; healthy live session left untouched."
 fi
 
-log "=== Maintenance Run Successfully Completed ==="
+log "=== maintenance complete ==="
