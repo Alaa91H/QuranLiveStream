@@ -1,0 +1,237 @@
+/* =============================================================================
+   QuranLiveStream — native platform layouts
+   The browser viewport is the final encoded frame. No post-render scale/crop/pad.
+   ============================================================================= */
+
+html[data-layout="landscape"] .broadcast-container {
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 30.7vw, 590px);
+}
+
+/* ------------------------------ PORTRAIT 9:16 ------------------------------ */
+html[data-layout="portrait"] .broadcast-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 67fr) minmax(0, 33fr);
+  direction: ltr;
+}
+html[data-layout="portrait"] .quran-stage {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  height: 100%;
+  padding: 2.1vh 4.5vw 10.5vh;
+}
+html[data-layout="portrait"] .quran-content-wrapper {
+  width: 94%;
+  max-width: none;
+}
+html[data-layout="portrait"] .ayah-ar {
+  font-size: clamp(30px, 5.8vw, 64px);
+  line-height: 1.85;
+  max-height: 29vh;
+  margin-bottom: .5vh;
+}
+html[data-layout="portrait"] .basmala-line {
+  font-size: clamp(20px, 3.5vw, 38px);
+  line-height: 1.65;
+  margin-bottom: .4vh;
+}
+html[data-layout="portrait"] .ayah-translation-en {
+  font-size: clamp(14px, 2.6vw, 26px);
+  line-height: 1.38;
+  max-height: 9vh;
+}
+html[data-layout="portrait"] .content-divider {
+  width: min(52vw, 420px);
+  margin: .6vh auto;
+}
+html[data-layout="portrait"] .tafsir-container {
+  width: 96%;
+  max-width: none;
+  gap: .7vh;
+}
+html[data-layout="portrait"] .tafsir-card {
+  border-radius: clamp(8px, 1.8vw, 18px);
+  padding: .65vh 2.5vw;
+}
+html[data-layout="portrait"] .tafsir-text {
+  font-size: clamp(11px, 2.25vw, 20px);
+  line-height: 1.48;
+}
+html[data-layout="portrait"] .tafsir-card-en .tafsir-text {
+  font-size: clamp(10px, 2vw, 18px);
+  line-height: 1.38;
+}
+html[data-layout="portrait"] .floating-pills-container {
+  left: 4vw;
+  right: 4vw;
+  bottom: 1.15vh;
+  width: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: .55vh 1.6vw;
+}
+html[data-layout="portrait"] .glass-pill {
+  min-width: 0;
+  width: 100%;
+  height: clamp(36px, 5vh, 56px);
+  border-radius: 999px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+html[data-layout="portrait"] .surah-ayah-pill {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-self: center;
+  width: min(92%, 760px);
+}
+html[data-layout="portrait"] .tafsir-info-pill { grid-column: 1; grid-row: 2; }
+html[data-layout="portrait"] .reciter-pill { grid-column: 2; grid-row: 2; }
+html[data-layout="portrait"] .pill-icon-circle {
+  width: clamp(27px, 5vw, 40px);
+  height: clamp(27px, 5vw, 40px);
+}
+html[data-layout="portrait"] .surah-title,
+html[data-layout="portrait"] .tafsir-title,
+html[data-layout="portrait"] .reciter-name-ar {
+  font-size: clamp(10px, 1.8vw, 16px);
+}
+html[data-layout="portrait"] .ayah-meta,
+html[data-layout="portrait"] .reciter-name-en {
+  font-size: clamp(8px, 1.35vw, 11px);
+}
+html[data-layout="portrait"] .reciter-avatar-box {
+  width: clamp(27px, 5vw, 42px);
+  height: clamp(27px, 5vw, 42px);
+}
+html[data-layout="portrait"] .wave-equalizer { display: none; }
+html[data-layout="portrait"] .world-panel {
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  height: 100%;
+  border-left: 0;
+  border-top: 1px solid rgba(212, 175, 55, .20);
+  padding: .7vh 1.7vw 1vh;
+}
+html[data-layout="portrait"] .city-cards-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(var(--portrait-city-rows, 2), minmax(0, 1fr));
+  gap: .55vh;
+}
+html[data-layout="portrait"] .city-card {
+  min-height: 0;
+  padding: .5vh 1.5vw;
+  border-radius: clamp(7px, 1.5vw, 13px);
+}
+html[data-layout="portrait"] .subcards-row {
+  height: clamp(34px, 4.3vh, 52px);
+  gap: .8vw;
+}
+html[data-layout="portrait"] .meta-subcard {
+  padding: 2px .75vw;
+  border-radius: clamp(5px, 1vw, 9px);
+}
+html[data-layout="portrait"] .time-day-subcard { min-width: 14vw; }
+html[data-layout="portrait"] .dates-subcard { min-width: 21vw; }
+html[data-layout="portrait"] .weather-subcard { min-width: 20vw; }
+html[data-layout="portrait"] .city-flag-box { width: clamp(26px, 6vw, 44px); }
+html[data-layout="portrait"] .city-name { font-size: clamp(10px, 2.2vw, 15px); }
+html[data-layout="portrait"] .city-country { font-size: clamp(8px, 1.6vw, 11px); }
+html[data-layout="portrait"] .sc-day { font-size: clamp(8px, 1.8vw, 13px); }
+html[data-layout="portrait"] .sc-time { font-size: clamp(9px, 2vw, 15px); }
+html[data-layout="portrait"] .sc-hijri,
+html[data-layout="portrait"] .sc-greg,
+html[data-layout="portrait"] .sc-hi,
+html[data-layout="portrait"] .sc-lo { font-size: clamp(7px, 1.45vw, 10px); }
+html[data-layout="portrait"] .sc-temp-val { font-size: clamp(10px, 2.2vw, 16px); }
+html[data-layout="portrait"] .prayer-times-row {
+  min-height: 0;
+  height: auto;
+  margin-top: .35vh;
+  gap: .7vw;
+}
+html[data-layout="portrait"] .p-col {
+  min-height: 0;
+  padding: .25vh .2vw;
+  border-radius: clamp(5px, 1vw, 9px);
+}
+html[data-layout="portrait"] .p-name { font-size: clamp(8px, 1.55vw, 12px); }
+html[data-layout="portrait"] .p-time { font-size: clamp(9px, 1.85vw, 16px); }
+html[data-layout="portrait"] .p-col.active-next .p-name { font-size: clamp(8px, 1.6vw, 12px); }
+html[data-layout="portrait"] .p-col.active-next .p-time { font-size: clamp(10px, 2vw, 17px); }
+
+/* Tiny portrait profiles: preserve every element, but remove cosmetic cost. */
+html[data-layout="portrait"] body.profile-nano .tafsir-info-pill,
+html[data-layout="portrait"] body.profile-micro .tafsir-info-pill {
+  padding-left: 7px;
+  padding-right: 7px;
+}
+html[data-layout="portrait"] body.profile-nano .speaker-icon-box,
+html[data-layout="portrait"] body.profile-nano .reciter-avatar-box { display: none; }
+
+/* ------------------------------- SQUARE 1:1 ------------------------------- */
+html[data-layout="square"] .broadcast-container {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 68fr) minmax(0, 32fr);
+}
+html[data-layout="square"] .quran-stage {
+  grid-column: 1;
+  grid-row: 1;
+  padding: 1.7vh 3vw 8.2vh;
+}
+html[data-layout="square"] .quran-content-wrapper { width: 95%; max-width: none; }
+html[data-layout="square"] .ayah-ar {
+  font-size: clamp(27px, 4.5vw, 58px);
+  line-height: 1.75;
+  max-height: 26vh;
+}
+html[data-layout="square"] .ayah-translation-en {
+  font-size: clamp(13px, 2vw, 23px);
+  max-height: 8vh;
+}
+html[data-layout="square"] .tafsir-container { max-width: none; width: 94%; gap: .55vh; }
+html[data-layout="square"] .tafsir-card { padding: .55vh 2vw; }
+html[data-layout="square"] .tafsir-text { font-size: clamp(10px, 1.7vw, 18px); line-height: 1.42; }
+html[data-layout="square"] .tafsir-card-en .tafsir-text { font-size: clamp(10px, 1.55vw, 17px); line-height: 1.34; }
+html[data-layout="square"] .floating-pills-container {
+  bottom: .8vh;
+  left: 2vw;
+  right: 2vw;
+  gap: 1.2vw;
+}
+html[data-layout="square"] .glass-pill { height: clamp(35px, 5vh, 50px); min-width: 0; }
+html[data-layout="square"] .world-panel {
+  grid-column: 1;
+  grid-row: 2;
+  border-left: 0;
+  border-top: 1px solid rgba(212,175,55,.2);
+  padding: .55vh 1vw;
+}
+html[data-layout="square"] .city-cards-list {
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(var(--square-city-rows, 3), minmax(0,1fr));
+  gap: .4vh;
+}
+html[data-layout="square"] .city-card { padding: .35vh 1vw; }
+html[data-layout="square"] .subcards-row { height: clamp(31px, 3.6vh, 48px); }
+html[data-layout="square"] .prayer-times-row { min-height: 0; margin-top: .25vh; }
+html[data-layout="square"] .p-col { padding: .18vh .1vw; }
+html[data-layout="square"] .p-name { font-size: clamp(8px, 1vw, 11px); }
+html[data-layout="square"] .p-time { font-size: clamp(9px, 1.3vw, 14px); }
+
+/* Never let an element force the final native canvas wider/taller. */
+html[data-layout] .broadcast-container,
+html[data-layout] .quran-stage,
+html[data-layout] .world-panel,
+html[data-layout] .quran-content-wrapper,
+html[data-layout] .city-card,
+html[data-layout] .subcards-row,
+html[data-layout] .prayer-times-row {
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+}
