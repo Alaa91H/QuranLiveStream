@@ -18,18 +18,43 @@ PORT="${QURAN_WEB_PORT:-4177}"; RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/
 GR="$RUNTIME/groups/$GROUP"; mkdir -p "$GR" "$LOG_DIR"
 WEB_PID="$RUNTIME/quran-web.pid"; XVFB_PID="$GR/xvfb.pid"; CHROME_PID="$GR/chrome.pid"
 SIG="$STREAM_WIDTH:$STREAM_HEIGHT:$LAYOUT:$PROFILE_REQ:${AUDIO_MODE:-pulse}:${GROUP_AUDIO_MASTER:-0}"
+web_healthy(){ curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null | grep -q '"ok":true'; }
 
 # One shared Node server for all canvases. flock prevents a multi-worker race.
+# Health, not merely PID existence, decides whether the server is reusable.
 (
   flock -x 9
-  if ! kill -0 "$(cat "$WEB_PID" 2>/dev/null)" 2>/dev/null; then
+  if ! web_healthy; then
+    oldpid="$(cat "$WEB_PID" 2>/dev/null || true)"
+    if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+      echo "[$(date '+%F %T')] web PID $oldpid is alive but unhealthy; restarting." >>"$LOG_DIR/web.log"
+      kill "$oldpid" 2>/dev/null || true
+      for _ in $(seq 1 10); do kill -0 "$oldpid" 2>/dev/null || break; sleep .2; done
+      kill -9 "$oldpid" 2>/dev/null || true
+    fi
+    rm -f "$WEB_PID"
+
+    # Refuse to hide a foreign/stuck listener behind a blank browser capture.
+    if (echo > /dev/tcp/127.0.0.1/$PORT) >/dev/null 2>&1; then
+      echo "[$(date '+%F %T')] ERROR port $PORT is occupied by an unhealthy process." >>"$LOG_DIR/web.log"
+      exit 1
+    fi
+
     (cd "$BASE_DIR/web" && PORT="$PORT" node --max-old-space-size="${NODE_MEM_MB}" server.js >>"$LOG_DIR/web.log" 2>&1 & echo $! >"$WEB_PID")
+    ready=0
     for _ in $(seq 1 30); do
-      curl -s --max-time 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null | grep -q '"ok":true' && break
+      if web_healthy; then ready=1; break; fi
       sleep 1
     done
+    if [ "$ready" -ne 1 ]; then
+      badpid="$(cat "$WEB_PID" 2>/dev/null || true)"
+      [ -n "$badpid" ] && kill "$badpid" 2>/dev/null || true
+      rm -f "$WEB_PID"
+      echo "[$(date '+%F %T')] ERROR Quran web API failed to become healthy on port $PORT." >>"$LOG_DIR/web.log"
+      exit 1
+    fi
   fi
-) 9>"$RUNTIME/web.lock"
+) 9>"$RUNTIME/web.lock" || exit 1
 
 # Pulse sink exists once. Only group0 emits browser audio; every FFmpeg worker
 # may read the same monitor, avoiding duplicate audio playback/decoding paths.
