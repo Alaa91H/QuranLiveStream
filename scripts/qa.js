@@ -70,6 +70,7 @@ const worker = read('scripts/stream_worker.sh');
 const governor = read('scripts/resource_governor.sh');
 const bench = read('scripts/benchmark_host.sh');
 const service = read('systemd/quran-live.service');
+const serverCode = read('web/server.js');
 assert(platforms.includes('quran_profile_dimensions') && platforms.includes('quran_target_layout'), 'Platform capability/native dimension registry missing');
 assert(platforms.includes('portrait') && platforms.includes('square') && platforms.includes('landscape'), 'Aspect families incomplete');
 assert(planner.includes('QUALITY_POLICY') && planner.includes('stream_plan.tsv'), 'Adaptive stream planner missing');
@@ -81,6 +82,8 @@ assert(worker.includes('-video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}"'), 'x11 c
 assert(governor.includes('RESOURCE_CPU_HARD') && governor.includes('slowest_speed') && governor.includes('minimum floor'), 'Global resource governor safeguards incomplete');
 assert(service.includes('CPUQuota=@CPU_QUOTA@') && service.includes('MemoryHigh=88%'), 'systemd resource envelope missing');
 assert(bench.includes('HOST_HW_1440') && bench.includes('HOST_HW_4K'), 'Progressive high-resolution benchmark gates missing');
+assert(serverCode.includes('CACHE_MAX_ENTRIES') && serverCode.includes('rememberCache'), 'Bounded in-memory API cache missing');
+assert(serverCode.includes('audioInflight') && serverCode.includes('AbortSignal.timeout(15000)'), 'Deduplicated bounded audio caching safeguards missing');
 console.log('✓ Gate 4: native multi-platform planner, encoder, governor and safety envelope verified.');
 
 // Offline assets.
@@ -92,7 +95,7 @@ assert(bg.size < 1.5 * 1024 * 1024, `Background too large (${(bg.size/1024/1024)
 const port = 8899;
 const server = spawn(process.execPath, ['web/server.js'], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(port), QURAN_OFFLINE: '1' },
+  env: { ...process.env, PORT: String(port), QURAN_OFFLINE: '1', CACHE_MAX_ENTRIES: '96' },
   stdio: 'ignore'
 });
 function getJson(url) {
@@ -111,6 +114,8 @@ function getJson(url) {
     }
     const health = await getJson(`http://127.0.0.1:${port}/api/health`);
     assert(health.status === 200 && health.data.ok === true, 'Health endpoint failed');
+    assert(health.data.cacheLimit === 96, `Cache limit override failed (${health.data.cacheLimit})`);
+    assert(health.data.cacheEntries <= health.data.cacheLimit, 'In-memory cache exceeds configured limit');
     const sr = await getJson(`http://127.0.0.1:${port}/api/surahs`);
     assert(sr.status === 200 && sr.data.length === 114, 'Surahs endpoint failed');
     const capitals = await getJson(`http://127.0.0.1:${port}/api/capitals?page=0&size=5`);
