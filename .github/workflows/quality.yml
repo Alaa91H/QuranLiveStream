@@ -76,6 +76,19 @@ jobs:
           test "$(quran_target_audio_rate kick)" -le 48000
           test "$(quran_target_audio_channels kick)" = 2
 
+          # Twitch currently caps AAC audio at 160 kbps.
+          test "$(quran_target_max_audio_bitrate_kbit twitch)" -le 160
+          grep -q 'quran_target_max_audio_bitrate_kbit' scripts/stream_worker.sh
+          grep -q -- '-b:a "$GROUP_AUDIO_BITRATE"' scripts/stream_worker.sh
+
+          # A custom H.264 Baseline requirement must not be ignored by a shared
+          # encoder that defaults to High/Main for other destinations.
+          CUSTOM1_H264_PROFILE=baseline
+          export CUSTOM1_H264_PROFILE
+          test "$(quran_target_h264_profile custom1)" = baseline
+          grep -q 'h264_profile_rank' scripts/stream_worker.sh
+          grep -q 'H264_PROFILE_RANK' scripts/stream_worker.sh
+
           # Platform/governor FPS changes must control the frame-count GOP. Fixed
           # keyint values in x264-params would override the adaptive 2-second GOP.
           if grep -nE 'X264_PARAMS=.*(keyint|min-keyint)=' scripts/hardware_profile.sh; then
