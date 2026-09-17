@@ -93,39 +93,32 @@ fi
 
 MP3_COUNT="$(find "$BASE_DIR/web/assets/audio" -maxdepth 1 -name '*.mp3' -size +1000c 2>/dev/null | wc -l | tr -d ' ')"
 case "$MP3_COUNT" in ''|*[!0-9]*) MP3_COUNT=0 ;; esac
-if [ "${AUDIO_MODE:-pulse}" = "file" ]; then
-  if [ "$MP3_COUNT" -ge "${FILE_AUDIO_MIN_COUNT:-2000}" ]; then
-    AUDIO="file"; log "Audio: local file mode ($MP3_COUNT mp3s)."
-  else
-    AUDIO="pulse"; log "WARN: file audio requested but only $MP3_COUNT mp3s; checking PulseAudio fallback."; WARN=1
-  fi
+REQUESTED_AUDIO="${AUDIO_MODE:-pulse}"
+# Recitation timing is owned by the visible browser. Local MP3 files remain the
+# browser's first choice, but FFmpeg must capture that same browser timeline via
+# the Pulse monitor. A separate concat playlist can drift from the displayed
+# ayah immediately after startup/restart, so it is never selected for broadcast.
+if [ "$REQUESTED_AUDIO" = "file" ]; then
+  WARN=1
+  log "WARN: AUDIO_MODE=file resolved to synchronized browser/Pulse capture; $MP3_COUNT local mp3s remain preferred by the UI."
 else
-  AUDIO="pulse"; log "Audio: checking PulseAudio ($MP3_COUNT local mp3s cached)."
+  log "Audio: synchronized browser/Pulse capture ($MP3_COUNT local mp3s cached)."
 fi
-
-# Never hand the worker an impossible pulse source. A merely installed pactl is
-# insufficient: the user daemon/sink path must be startable. If PulseAudio is
-# unavailable but at least some local recitation exists, degrade to the partial
-# file playlist rather than entering an endless FFmpeg reconnect loop.
-if [ "$AUDIO" = "pulse" ]; then
-  PULSE_READY=0
-  if command -v pactl >/dev/null 2>&1; then
+AUDIO="pulse"
+PULSE_READY=0
+if command -v pactl >/dev/null 2>&1; then
+  pactl info >/dev/null 2>&1 && PULSE_READY=1 || true
+  if [ "$PULSE_READY" -eq 0 ] && command -v pulseaudio >/dev/null 2>&1; then
+    pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
+    sleep 1
     pactl info >/dev/null 2>&1 && PULSE_READY=1 || true
-    if [ "$PULSE_READY" -eq 0 ] && command -v pulseaudio >/dev/null 2>&1; then
-      pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
-      sleep 1
-      pactl info >/dev/null 2>&1 && PULSE_READY=1 || true
-    fi
   fi
-  if [ "$PULSE_READY" -eq 1 ]; then
-    log "Audio: PulseAudio daemon reachable."
-  elif [ "$MP3_COUNT" -gt 0 ]; then
-    AUDIO="file"; WARN=1
-    log "WARN: PulseAudio unavailable; using partial local playlist ($MP3_COUNT mp3s) instead."
-  else
-    log "HARD FAIL: no usable PulseAudio daemon and no local recitation audio exists."
-    FAIL=1
-  fi
+fi
+if [ "$PULSE_READY" -eq 1 ]; then
+  log "Audio: PulseAudio daemon reachable."
+else
+  log "HARD FAIL: PulseAudio is required for synchronized recitation/display capture (run scripts/install_deps.sh)."
+  FAIL=1
 fi
 VIDEO="live"
 
