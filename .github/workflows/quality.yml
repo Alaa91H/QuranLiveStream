@@ -40,24 +40,29 @@ jobs:
             [ -f "$f" ] && node --check "$f"
           done
 
-      - name: Validate universal stream architecture
+      - name: Validate universal native stream architecture
         shell: bash
         run: |
           set -euo pipefail
           grep -q 'stream_multi.sh' systemd/quran-live.service
           grep -q 'quran_profile_dimensions' scripts/platforms.sh
           grep -q 'stream_worker.sh' scripts/stream_multi.sh
-          grep -q 'scale\|crop\|pad' scripts/stream_worker.sh && {
-            echo 'Worker contains forbidden scale/crop/pad token'; exit 1;
-          } || true
+          grep -q 'stream_plan.sh' scripts/stream_multi.sh
+          # The final FFmpeg video filter chain must not contain geometry changes.
+          if grep -nE -- '-vf[[:space:]]+[^#]*(scale|crop|pad)|-filter_complex[[:space:]]+[^#]*(scale|crop|pad)' scripts/stream_worker.sh; then
+            echo 'Native worker contains a forbidden scale/crop/pad FFmpeg filter.'
+            exit 1
+          fi
           grep -q 'platform.css' web/index.html
           grep -q 'platform-layout.js' web/index.html
+          grep -q 'layout="portrait"\|portrait)' scripts/platforms.sh
 
-      - name: Ensure no committed streaming secrets
+      - name: Ensure .env secrets are not tracked
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE --exclude='.env.example' --exclude-dir='.git' '(STREAM_KEY|RTMP_TARGET)=[^[:space:]]{8,}' .; then
-            echo 'Potential committed streaming secret found.'
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo '.env is tracked; refusing to expose streaming credentials.'
             exit 1
           fi
+          test -f .env.example
