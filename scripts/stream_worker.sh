@@ -16,14 +16,17 @@ software_preset(){ case "$1" in nano|micro|eco|high|ultra|extreme)echo ultrafast
 h264_profile_rank(){ case "${1:-high}" in baseline)echo 0;;main)echo 1;;*)echo 2;;esac; }
 
 IFS=',' read -ra TARGETS <<< "$TARGET_CSV"; TARGET_COUNT=${#TARGETS[@]}; [ "$TARGET_COUNT" -gt 0 ] || exit 1
-FPS="$STREAM_FPS"; GROUP_AUDIO_RATE="$AUDIO_SAMPLERATE"; GROUP_AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"; H264_PROFILE=high; H264_PROFILE_RANK=2
+FPS="$STREAM_FPS"; GROUP_AUDIO_RATE="$AUDIO_SAMPLERATE"; GROUP_AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"; GROUP_AUDIO_KBIT="$(to_kbit "$AUDIO_BITRATE")"; H264_PROFILE=high; H264_PROFILE_RANK=2
 for t in "${TARGETS[@]}"; do
   cap="$(quran_target_max_fps "$t")"; [ "$cap" -lt "$FPS" ] && FPS="$cap"
   rate="$(quran_target_audio_rate "$t")"; [ "$rate" -gt "$GROUP_AUDIO_RATE" ] && GROUP_AUDIO_RATE="$rate"
   channels="$(quran_target_audio_channels "$t")"; [ "$channels" -gt "$GROUP_AUDIO_CHANNELS" ] && GROUP_AUDIO_CHANNELS="$channels"
+  audio_cap="$(quran_target_max_audio_bitrate_kbit "$t")"; [ "$audio_cap" -gt 0 ] && [ "$GROUP_AUDIO_KBIT" -gt "$audio_cap" ] && GROUP_AUDIO_KBIT="$audio_cap"
   profile="$(quran_target_h264_profile "$t")"; profile_rank="$(h264_profile_rank "$profile")"
   if [ "$profile_rank" -lt "$H264_PROFILE_RANK" ]; then H264_PROFILE="$profile"; H264_PROFILE_RANK="$profile_rank"; fi
 done
+[ "$GROUP_AUDIO_KBIT" -gt 0 ] || GROUP_AUDIO_KBIT=64
+GROUP_AUDIO_BITRATE="${GROUP_AUDIO_KBIT}k"
 if [ -f "$RUNTIME/governor.env" ]; then source "$RUNTIME/governor.env" 2>/dev/null || true; fi
 if [[ "${GOVERNOR_FPS_CAP:-}" =~ ^[0-9]+$ ]] && [ "${GOVERNOR_FPS_CAP:-0}" -gt 0 ] && [ "$FPS" -gt "$GOVERNOR_FPS_CAP" ]; then FPS="$GOVERNOR_FPS_CAP"; fi
 [ "$FPS" -lt 1 ] && FPS=1
@@ -32,7 +35,7 @@ VIDEO_KBIT="$(profile_quality_kbit "$PROFILE_REQ" "$FPS")"
 for t in "${TARGETS[@]}"; do cap="$(quran_target_max_bitrate_kbit "$t")"; [ "$cap" -gt 0 ] && [ "$cap" -lt "$VIDEO_KBIT" ] && VIDEO_KBIT="$cap"; done
 if [ "${EGRESS_GUARD:-1}" = 1 ] && [ -f "$RUNTIME/net.env" ]; then
  source "$RUNTIME/net.env" 2>/dev/null || true; TOTAL_TARGETS="${STREAM_TOTAL_TARGETS:-$TARGET_COUNT}"; [[ "$TOTAL_TARGETS" =~ ^[0-9]+$ ]] || TOTAL_TARGETS="$TARGET_COUNT"
- SAFE_TOTAL="$(awk "BEGIN{printf \"%.0f\", (${HOST_EGRESS_SAFE_MBPS:-0})*1000*0.88}")"; if [ "$SAFE_TOTAL" -gt 0 ]; then AUDIO_K="$(to_kbit "$AUDIO_BITRATE")"; SAFE_EACH=$((SAFE_TOTAL/TOTAL_TARGETS)); SAFE_VIDEO=$((SAFE_EACH-AUDIO_K-64)); [ "$SAFE_VIDEO" -lt 350 ]&&SAFE_VIDEO=350; [ "$VIDEO_KBIT" -gt "$SAFE_VIDEO" ]&&VIDEO_KBIT="$SAFE_VIDEO"; fi
+ SAFE_TOTAL="$(awk "BEGIN{printf \"%.0f\", (${HOST_EGRESS_SAFE_MBPS:-0})*1000*0.88}")"; if [ "$SAFE_TOTAL" -gt 0 ]; then SAFE_EACH=$((SAFE_TOTAL/TOTAL_TARGETS)); SAFE_VIDEO=$((SAFE_EACH-GROUP_AUDIO_KBIT-64)); [ "$SAFE_VIDEO" -lt 350 ]&&SAFE_VIDEO=350; [ "$VIDEO_KBIT" -gt "$SAFE_VIDEO" ]&&VIDEO_KBIT="$SAFE_VIDEO"; fi
 fi
 VIDEO_BITRATE="${VIDEO_KBIT}k"; MAX_BITRATE="$VIDEO_BITRATE"; BUF_SIZE="$((VIDEO_KBIT*2))k"
 escape_tee_uri(){ local s="$1"; s="${s//\\/\\\\}"; s="${s//|/\\|}"; printf '%s' "$s"; }
@@ -54,10 +57,10 @@ else log "Unsupported requested codec '$CODEC_REQ'; falling back to h264."; VARG
 AUDIO_INPUT=()
 if [ "${AUDIO_MODE:-pulse}" = file ]; then "$BASE_DIR/scripts/build_audio_playlist.sh" >>"$LOG" 2>&1||true; if [ -s "$RUNTIME/audio_playlist.txt" ]; then AUDIO_INPUT=(-re -stream_loop -1 -f concat -safe 0 -probesize 50k -analyzeduration 0 -thread_queue_size 64 -fflags +genpts -i "$RUNTIME/audio_playlist.txt"); else AUDIO_INPUT=(-thread_queue_size 64 -f lavfi -i "anullsrc=r=${GROUP_AUDIO_RATE}:cl=stereo"); fi; else AUDIO_INPUT=(-thread_queue_size 128 -f pulse -i quran_sink.monitor); fi
 FPSMODE=(-fps_mode cfr); ffmpeg -hide_banner -h full 2>/dev/null|grep -q -- -fps_mode||FPSMODE=(-vsync cfr); GOP=$((FPS*2)); [ "$GOP" -lt 2 ]&&GOP=2
-printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nFPS=%s\nVIDEO_KBIT=%s\nENCODER=%s\nH264_PROFILE=%s\nAUDIO_RATE=%s\nAUDIO_CHANNELS=%s\nTARGETS=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$FPS" "$VIDEO_KBIT" "$ACTIVE_ENCODER" "$H264_PROFILE" "$GROUP_AUDIO_RATE" "$GROUP_AUDIO_CHANNELS" "$TARGET_CSV" > "$GR/worker.env"
+printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nFPS=%s\nVIDEO_KBIT=%s\nENCODER=%s\nH264_PROFILE=%s\nAUDIO_KBIT=%s\nAUDIO_RATE=%s\nAUDIO_CHANNELS=%s\nTARGETS=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$FPS" "$VIDEO_KBIT" "$ACTIVE_ENCODER" "$H264_PROFILE" "$GROUP_AUDIO_KBIT" "$GROUP_AUDIO_RATE" "$GROUP_AUDIO_CHANNELS" "$TARGET_CSV" > "$GR/worker.env"
 while [ ! -f "$STOP_FLAG" ]; do
- rm -f "$PROGRESS"; log "Native encode ${STREAM_WIDTH}x${STREAM_HEIGHT}@${FPS} ${VIDEO_BITRATE} encoder=$ACTIVE_ENCODER h264_profile=$H264_PROFILE audio=${GROUP_AUDIO_RATE}Hz/${GROUP_AUDIO_CHANNELS}ch targets=$TARGET_SUMMARY"; set +e
- ffmpeg -hide_banner -loglevel warning -nostdin "${VAAPI_PRE[@]}" -f x11grab -framerate "$FPS" -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" -draw_mouse 0 -thread_queue_size 64 -probesize 32k -analyzeduration 0 -i ":$DISPLAY_NUM.0" "${AUDIO_INPUT[@]}" -map 0:v:0 -map 1:a:0 -vf "$VF" "${VARGS[@]}" "${PIXFMT[@]}" -b:v "$VIDEO_BITRATE" -maxrate "$MAX_BITRATE" -bufsize "$BUF_SIZE" -g "$GOP" -keyint_min "$GOP" -sc_threshold 0 -r "$FPS" "${FPSMODE[@]}" -c:a aac -b:a "$AUDIO_BITRATE" -ar "$GROUP_AUDIO_RATE" -ac "$GROUP_AUDIO_CHANNELS" -af "aresample=${GROUP_AUDIO_RATE}:async=1:first_pts=0" -flags +global_header -progress "$PROGRESS" -stats_period 5 -f tee "${TEE_EXTRA[@]}" "$TEE_SPEC" >>"$LOG" 2>&1
+ rm -f "$PROGRESS"; log "Native encode ${STREAM_WIDTH}x${STREAM_HEIGHT}@${FPS} ${VIDEO_BITRATE} encoder=$ACTIVE_ENCODER h264_profile=$H264_PROFILE audio=${GROUP_AUDIO_BITRATE}/${GROUP_AUDIO_RATE}Hz/${GROUP_AUDIO_CHANNELS}ch targets=$TARGET_SUMMARY"; set +e
+ ffmpeg -hide_banner -loglevel warning -nostdin "${VAAPI_PRE[@]}" -f x11grab -framerate "$FPS" -video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}" -draw_mouse 0 -thread_queue_size 64 -probesize 32k -analyzeduration 0 -i ":$DISPLAY_NUM.0" "${AUDIO_INPUT[@]}" -map 0:v:0 -map 1:a:0 -vf "$VF" "${VARGS[@]}" "${PIXFMT[@]}" -b:v "$VIDEO_BITRATE" -maxrate "$MAX_BITRATE" -bufsize "$BUF_SIZE" -g "$GOP" -keyint_min "$GOP" -sc_threshold 0 -r "$FPS" "${FPSMODE[@]}" -c:a aac -b:a "$GROUP_AUDIO_BITRATE" -ar "$GROUP_AUDIO_RATE" -ac "$GROUP_AUDIO_CHANNELS" -af "aresample=${GROUP_AUDIO_RATE}:async=1:first_pts=0" -flags +global_header -progress "$PROGRESS" -stats_period 5 -f tee "${TEE_EXTRA[@]}" "$TEE_SPEC" >>"$LOG" 2>&1
  EC=$?; set -e; [ -f "$STOP_FLAG" ]&&break; log "FFmpeg exited $EC; retry in 4s."; sleep 4
 done
 log "Worker stopped."
