@@ -58,7 +58,7 @@ console.log('✓ Gate 3: responsive native 16:9 / 9:16 / 1:1 UI verified.');
 const required = [
   'scripts/hardware_profile.sh','scripts/benchmark_host.sh','scripts/platforms.sh','scripts/stream_plan.sh',
   'scripts/stream_multi.sh','scripts/stream_worker.sh','scripts/broadcast_ui_group.sh','scripts/resource_governor.sh',
-  'scripts/preflight.sh','scripts/watchdog.sh','scripts/maintenance.sh','scripts/setup_cron.sh','scripts/control.sh',
+  'scripts/process_guard.sh','scripts/preflight.sh','scripts/watchdog.sh','scripts/maintenance.sh','scripts/setup_cron.sh','scripts/control.sh',
   'scripts/stream_youtube.sh','scripts/stream_tiktok.sh','scripts/stream_dual.sh','systemd/quran-live.service',
   'systemd/quran-live-governor.service'
 ];
@@ -69,6 +69,10 @@ const master = read('scripts/stream_multi.sh');
 const worker = read('scripts/stream_worker.sh');
 const governor = read('scripts/resource_governor.sh');
 const watchdog = read('scripts/watchdog.sh');
+const health = read('scripts/health_check.sh');
+const processGuard = read('scripts/process_guard.sh');
+const uiGroup = read('scripts/broadcast_ui_group.sh');
+const stopUi = read('scripts/stop_ui.sh');
 const bench = read('scripts/benchmark_host.sh');
 const service = read('systemd/quran-live.service');
 const serverCode = read('web/server.js');
@@ -82,7 +86,11 @@ assert(!/(^|[,=:])\s*(scale|crop|pad)\s*=/.test(workerCode), 'Forbidden FFmpeg g
 assert(worker.includes('-video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}"'), 'x11 capture is not bound to final native dimensions');
 assert(worker.includes('h264_profile_rank') && worker.includes('H264_PROFILE_RANK') && worker.includes('baseline)echo 0'), 'Shared H.264 encoder does not honor the lowest compatible profile');
 assert(governor.includes('RESOURCE_CPU_HARD') && governor.includes('slowest_speed') && governor.includes('minimum floor'), 'Global resource governor safeguards incomplete');
-assert(watchdog.includes('ffmpeg_alive=0') && watchdog.includes('now-mt') && watchdog.includes('-le 30'), 'Watchdog must require both a live FFmpeg process and a fresh progress heartbeat');
+assert(processGuard.includes('quran_owned_pid') && processGuard.includes('-progress $marker') && processGuard.includes(':$marker'), 'Central process ownership guard is incomplete');
+assert(watchdog.includes('quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress"') && watchdog.includes('now-mt') && watchdog.includes('-le 30'), 'Watchdog must require exact FFmpeg ownership and a fresh progress heartbeat');
+assert(health.includes('quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress"'), 'Health check must validate exact FFmpeg ownership');
+assert(uiGroup.includes('quran_owned_pid "$xpid" xvfb "$DISPLAY_NUM"') && uiGroup.includes('quran_owned_pid "$cpid" browser "$GR"'), 'Canvas launcher must reject stale/reused Xvfb or browser PIDs');
+assert(!stopUi.includes('fuser -k'), 'UI cleanup must never kill an unverified listener by port alone');
 assert(service.includes('CPUQuota=@CPU_QUOTA@') && service.includes('MemoryHigh=88%'), 'systemd resource envelope missing');
 assert(bench.includes('HOST_HW_1440') && bench.includes('HOST_HW_4K'), 'Progressive high-resolution benchmark gates missing');
 assert(serverCode.includes('CACHE_MAX_ENTRIES') && serverCode.includes('rememberCache'), 'Bounded in-memory API cache missing');
