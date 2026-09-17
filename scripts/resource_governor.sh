@@ -37,9 +37,16 @@ slowest_speed(){
 
 benchmark_ceiling(){
   local requested="${STREAM_PROFILE:-auto}" hp hr rr
-  unset STREAM_PROFILE || true
-  source "$BASE_DIR/scripts/hardware_profile.sh" >/dev/null 2>&1
-  hp="$PROFILE"; hr="$(rank "$hp")"
+  # Evaluate the hardware/benchmark ceiling in a subshell. STREAM_PROFILE is a
+  # user ceiling for the lifetime of the governor and must survive every cycle;
+  # unsetting it in the governor process would silently allow later upgrades
+  # above the requested maximum.
+  hp="$(
+    unset STREAM_PROFILE || true
+    source "$BASE_DIR/scripts/hardware_profile.sh" >/dev/null 2>&1
+    printf '%s\n' "$PROFILE"
+  )"
+  hr="$(rank "$hp")"
   if [ -n "$requested" ] && [ "${requested,,}" != "auto" ]; then rr="$(rank "${requested,,}")"; [ "$rr" -lt "$hr" ] && hp="$(prof "$rr")"; fi
   echo "$hp"
 }
@@ -125,6 +132,10 @@ cycle(){
   echo "$high $low $changed" > "$STATE"
 }
 
+# Allow CI/regression checks to source the governor functions without entering
+# the service loop. Normal execution is unchanged.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
+
 if [ "${1:-}" = "--once" ]; then cycle; exit 0; fi
-log "Governor: interval=${INTERVAL}s CPU soft/hard=${RESOURCE_CPU_SOFT:-78}/${RESOURCE_CPU_HARD:-88}% RAM=${RESOURCE_RAM_SOFT:-82}/${RESOURCE_RAM_HARD:-89}%"
+log "Governor: interval=${INTERVAL}s CPU soft/hard=${RESOURCE_CPU_SOFT:-78}/${RESOURCE_CPU_HARD:-88}% RAM soft/hard=${RESOURCE_RAM_SOFT:-82}/${RESOURCE_RAM_HARD:-89}%"
 while true; do cycle || true; sleep "$INTERVAL"; done
