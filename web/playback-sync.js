@@ -34,11 +34,20 @@
       const revision = Number(p.revision || 0);
       const surah = Number(p.surah || 0);
       const ayah = Number(p.ayah || 0);
-      if (revision <= 0 || revision === lastRevision || surah < 1 || ayah < 1) return;
-      lastRevision = revision;
-      if (typeof state !== 'undefined' && state.currentSurah === surah && state.currentAyah === ayah) return;
+      if (revision <= 0 || surah < 1 || ayah < 1) return;
+      const alreadyMirrored = typeof state !== 'undefined' && state.currentSurah === surah && state.currentAyah === ayah;
+      if (revision === lastRevision && alreadyMirrored) return;
+
+      // Do not trust revision alone: app.js may finish restoring an old local
+      // position after the first poll. Keep converging until the rendered state
+      // itself matches the master, then remember the revision.
       followerBusy = true;
-      try { await loadQuranVerse(surah, ayah); } finally { followerBusy = false; }
+      try {
+        if (!alreadyMirrored) await loadQuranVerse(surah, ayah);
+        lastRevision = revision;
+      } finally {
+        followerBusy = false;
+      }
     } catch {}
   }
 
