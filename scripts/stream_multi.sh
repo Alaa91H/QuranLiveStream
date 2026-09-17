@@ -12,10 +12,9 @@ RUNTIME="$BASE_DIR/runtime"; LOG_DIR="$BASE_DIR/logs"; mkdir -p "$RUNTIME/groups
 LOG="$LOG_DIR/stream.log"; STOP_FLAG="$RUNTIME/broadcast_stopped.flag"
 log(){ echo "[$(date '+%F %T')] [MASTER] $*" | tee -a "$LOG"; }
 
-# Resolve effective audio/profile defaults for this host before preflight.
-source "$BASE_DIR/scripts/hardware_profile.sh"
-
-# Verify binaries, selected destinations, network reachability and HW encoders.
+# Preflight independently resolves the safe hardware profile. Do NOT source the
+# profile here with a user override: a requested profile is only a ceiling and
+# must never force weak hardware upward before the planner evaluates it.
 if ! "$BASE_DIR/scripts/preflight.sh" 2>&1 | tee -a "$LOG"; then
   log "Preflight BLOCKED; refusing to start an invalid broadcast."
   exit 1
@@ -23,7 +22,6 @@ fi
 [ -f "$RUNTIME/preflight.env" ] && { set -a; source "$RUNTIME/preflight.env" 2>/dev/null || true; set +a; }
 AUDIO_MODE="${PREFLIGHT_AUDIO:-${AUDIO_MODE:-pulse}}"; export AUDIO_MODE
 
-# Generate quality/aspect groups from current benchmark + governor state.
 "$BASE_DIR/scripts/stream_plan.sh" 2>&1 | tee -a "$LOG"
 PLAN="$RUNTIME/stream_plan.tsv"; [ -s "$PLAN" ] || { log "Empty stream plan."; exit 1; }
 GROUP_COUNT="$(wc -l < "$PLAN" | tr -d ' ')"; TOTAL_TARGETS=0
@@ -66,14 +64,24 @@ done < "$PLAN"
 
 log "Broadcast active: $TOTAL_TARGETS target(s), $GROUP_COUNT native canvas/encoder group(s), audio=$AUDIO_MODE."
 
-# Any fatal worker exit means its selected platforms are no longer served.
-# Exit master so systemd restarts the entire coordinated stack cleanly.
+# Bash 4.3+ has wait -n; a portable polling fallback keeps older Bash hosts usable.
 set +e
 while [ ! -f "$STOP_FLAG" ]; do
-  wait -n "${PIDS[@]}"; EC=$?
-  [ -f "$STOP_FLAG" ] && break
-  log "A worker exited unexpectedly (code $EC); restarting coordinated stack."
-  exit 1
+  if help wait 2>/dev/null | grep -q -- '-n'; then
+    wait -n "${PIDS[@]}"; EC=$?
+    [ -f "$STOP_FLAG" ] && break
+    log "A worker exited unexpectedly (code $EC); restarting coordinated stack."
+    exit 1
+  fi
+  sleep 2
+  for p in "${PIDS[@]}"; do
+    if ! kill -0 "$p" 2>/dev/null; then
+      wait "$p"; EC=$?
+      [ -f "$STOP_FLAG" ] && break 2
+      log "A worker exited unexpectedly (code $EC); restarting coordinated stack."
+      exit 1
+    fi
+  done
 done
 set -e
 log "Broadcast stop requested."
