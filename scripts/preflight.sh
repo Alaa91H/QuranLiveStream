@@ -97,13 +97,35 @@ if [ "${AUDIO_MODE:-pulse}" = "file" ]; then
   if [ "$MP3_COUNT" -ge "${FILE_AUDIO_MIN_COUNT:-2000}" ]; then
     AUDIO="file"; log "Audio: local file mode ($MP3_COUNT mp3s)."
   else
-    AUDIO="pulse"; log "WARN: file audio requested but only $MP3_COUNT mp3s -> PulseAudio for this run."; WARN=1
+    AUDIO="pulse"; log "WARN: file audio requested but only $MP3_COUNT mp3s; checking PulseAudio fallback."; WARN=1
   fi
 else
-  AUDIO="pulse"; log "Audio: PulseAudio ($MP3_COUNT local mp3s cached)."
+  AUDIO="pulse"; log "Audio: checking PulseAudio ($MP3_COUNT local mp3s cached)."
 fi
-if [ "$AUDIO" = "pulse" ] && ! command -v pactl >/dev/null 2>&1 && [ "$MP3_COUNT" -eq 0 ]; then
-  log "HARD FAIL: PulseAudio unavailable and no local audio exists (would broadcast silence)."; FAIL=1
+
+# Never hand the worker an impossible pulse source. A merely installed pactl is
+# insufficient: the user daemon/sink path must be startable. If PulseAudio is
+# unavailable but at least some local recitation exists, degrade to the partial
+# file playlist rather than entering an endless FFmpeg reconnect loop.
+if [ "$AUDIO" = "pulse" ]; then
+  PULSE_READY=0
+  if command -v pactl >/dev/null 2>&1; then
+    pactl info >/dev/null 2>&1 && PULSE_READY=1 || true
+    if [ "$PULSE_READY" -eq 0 ] && command -v pulseaudio >/dev/null 2>&1; then
+      pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1 || true
+      sleep 1
+      pactl info >/dev/null 2>&1 && PULSE_READY=1 || true
+    fi
+  fi
+  if [ "$PULSE_READY" -eq 1 ]; then
+    log "Audio: PulseAudio daemon reachable."
+  elif [ "$MP3_COUNT" -gt 0 ]; then
+    AUDIO="file"; WARN=1
+    log "WARN: PulseAudio unavailable; using partial local playlist ($MP3_COUNT mp3s) instead."
+  else
+    log "HARD FAIL: no usable PulseAudio daemon and no local recitation audio exists."
+    FAIL=1
+  fi
 fi
 VIDEO="live"
 
