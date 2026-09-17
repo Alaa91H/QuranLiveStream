@@ -77,15 +77,27 @@ jobs:
           grep -q 'PREFLIGHT_AUDIO=$AUDIO' scripts/preflight.sh
           grep -q 'AUDIO="pulse"' scripts/preflight.sh
 
-          # Each worker must explicitly own its FFmpeg child for clean fallback
-          # restarts; watchdog and health-check status are tied to that exact PID
-          # plus a fresh progress heartbeat.
+          # Recovery must prove process ownership, not merely trust stale PIDs.
+          test -f scripts/process_guard.sh
+          for f in scripts/stop_ui.sh scripts/broadcast_ui_group.sh scripts/watchdog.sh scripts/health_check.sh; do
+            grep -q 'process_guard.sh' "$f"
+          done
+          grep -Fq '[[ " $cmd " == *" :$marker "* ]]' scripts/process_guard.sh
+          grep -Fq '[[ " $cmd " == *" -progress $marker "* ]]' scripts/process_guard.sh
+          grep -q 'quran_owned_pid "$cp" browser "$d"' scripts/watchdog.sh
+          grep -q 'quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress"' scripts/watchdog.sh
+          grep -q 'quran_owned_pid "$cp" browser "$d"' scripts/health_check.sh
+          grep -q 'quran_owned_pid "$fp" ffmpeg "$d/ffmpeg.progress"' scripts/health_check.sh
+          grep -q 'quran_owned_pid "$xpid" xvfb "$DISPLAY_NUM"' scripts/broadcast_ui_group.sh
+          grep -q 'quran_owned_pid "$cpid" browser "$GR"' scripts/broadcast_ui_group.sh
+          if grep -q 'fuser -k' scripts/stop_ui.sh; then
+            echo 'stop_ui.sh may kill an unrelated listener on the configured port.'
+            exit 1
+          fi
+
+          # Each worker must explicitly own its FFmpeg child for clean restarts.
           grep -q 'FFMPEG_PID_FILE=.*ffmpeg.pid' scripts/stream_worker.sh
           grep -q "trap 'cleanup_worker; exit 0' INT TERM" scripts/stream_worker.sh
-          grep -q 'cat "$d/ffmpeg.pid"' scripts/watchdog.sh
-          grep -q 'now-mt' scripts/watchdog.sh
-          grep -q 'cat "$d/ffmpeg.pid"' scripts/health_check.sh
-          grep -q 'comm="$(ps -p "$fp" -o comm=' scripts/health_check.sh
 
       - name: Validate platform ingest contracts
         shell: bash
