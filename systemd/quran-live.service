@@ -1,0 +1,24 @@
+[Unit]
+Description=Quran Live Universal Adaptive Multi-Platform Stream
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/quran-live-stream
+EnvironmentFile=-%h/quran-live-stream/.env
+ExecStart=%h/quran-live-stream/scripts/stream_universal.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+Nice=-5
+OOMScoreAdjust=-250
+# Memory protection: adaptive engine should downshift before these are reached.
+MemoryHigh=85%
+MemoryMax=95%
+StandardOutput=append:%h/quran-live-stream/logs/systemd_universal.log
+StandardError=append:%h/quran-live-stream/logs/systemd_universal.log
+
+[Install]
+WantedBy=default.target
