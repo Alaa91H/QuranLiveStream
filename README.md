@@ -1,217 +1,197 @@
 # Quran Live Stream
 
 <p align="center">
-  <strong>24/7 Autonomous, High-Efficiency Quran Live Streaming System with Verse-by-Verse Recitation Synchronization, Dual Tafsir, and Global Prayer Times</strong>
+  <strong>24/7 adaptive Quran broadcasting with native per-platform layouts, resource-aware quality, synchronized recitation, bilingual Tafsir, weather and global prayer times.</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square" alt="Node.js 18+">
   <img src="https://img.shields.io/badge/FFmpeg-5.0%2B-orange?style=flat-square" alt="FFmpeg">
-  <img src="https://img.shields.io/badge/Min%20Spec-1%20vCPU%20%7C%201%20GB%20RAM-blue?style=flat-square" alt="Min Spec">
-  <img src="https://img.shields.io/badge/Streaming-720p%20to%208K-blueviolet?style=flat-square" alt="Resolution">
-  <img src="https://img.shields.io/badge/QA%20Gates-5%2F5%20Passing-success?style=flat-square" alt="QA Passing">
+  <img src="https://img.shields.io/badge/Minimum-1%20vCPU%20%7C%201%20GB-blue?style=flat-square" alt="Minimum">
+  <img src="https://img.shields.io/badge/Layouts-16%3A9%20%7C%209%3A16%20%7C%201%3A1-blueviolet?style=flat-square" alt="Native layouts">
+  <img src="https://img.shields.io/badge/Mode-Adaptive%2024%2F7-success?style=flat-square" alt="Adaptive">
   <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License">
 </p>
 
----
-
 <p align="center">
-  <img src="screenshot.png" alt="Quran Live Stream Live Preview" width="95%" style="border-radius: 8px; box-shadow: 0 12px 36px rgba(0,0,0,0.6);">
+  <img src="screenshot.png" alt="Quran Live Stream preview" width="95%">
 </p>
 
----
+## Overview
 
-## 📖 Overview
+QuranLiveStream is an autonomous live-broadcast engine for YouTube, TikTok, Facebook, Twitch, Kick and arbitrary RTMP/RTMPS destinations. It combines Quran recitation, Arabic text, translation, dual Tafsir, global weather, local clocks and prayer times in a continuously running broadcast.
 
-**Quran Live Stream** is an enterprise-grade, fully automated 24/7 broadcast system engineered to stream the Holy Quran to YouTube, TikTok, Facebook, and custom RTMP destinations with cinematic aesthetics, gapless verse-by-verse recitation synchronization, bilingual Tafsir, and verified global prayer times across 195 world capitals.
+The current architecture is built around three rules:
 
-Architected specifically to achieve maximum efficiency and rock-solid stability on ultra-low-spec cloud instances (such as **Oracle Cloud Free Tier: 1 vCPU, 1 GB RAM**) without sacrificing visual excellence, while dynamically scaling up to **8K (4320p)** on multi-core GPU workstations.
+1. **Only selected platforms are published.** `STREAM_TARGETS` controls the exact destinations.
+2. **Every aspect ratio is rendered natively.** Browser viewport, Xvfb canvas and encoded frame use the same final dimensions. The universal worker does not use FFmpeg `scale`, `crop` or `pad` to force one platform into another platform's shape.
+3. **Quality is earned by measured capacity.** Benchmark + runtime governor select the highest sustainable profile and automatically reduce profile/FPS/UI cost under pressure.
 
----
+## Native multi-platform layouts
 
-## ✨ Key Features
+The planner groups destinations by aspect ratio, codec and—on powerful hardware—platform quality ceiling.
 
-### 1. 🎙️ Complete Quran Recitation Synchronization
-- **Gapless Audio-Visual Sync**: Every single verse across all 114 Surahs (6,236 Ayahs) is synchronized with Sheikh Mishary Rashid Alafasy's recitation.
-- **Continuous 24/7 Autoplay**: Automatically advances to the next Ayah upon audio completion; transitions smoothly between Surahs and loops continuously.
-- **Audio Pre-Buffering**: Pre-fetches the upcoming verse text, translation, Tafsir, and audio buffer in the background to ensure zero buffer delay.
-- **Fail-Safe Fallback**: Includes a dynamic timeout safeguard based on text length to prevent broadcast freezes if audio delivery encounters network latency.
-- **Visual Equalizer**: Live animated audio waveform equalizer and pulsing speaker indicator synchronized with active audio playback.
+| Layout | Typical destinations | Native examples |
+| --- | --- | --- |
+| Landscape 16:9 | YouTube, Facebook, Twitch, Kick, custom RTMP | 854×480, 1280×720, 1920×1080, 2560×1440, 3840×2160 |
+| Portrait 9:16 | TikTok, Instagram/Reels, Shorts/vertical destinations | 480×854, 720×1280, 1080×1920, 1440×2560, 2160×3840 |
+| Square 1:1 | Custom/social workflows | 480×480, 720×720, 1080×1080 and higher |
 
-### 2. ⚡ Dynamic Hardware Adaptation (720p to 8K)
-- Built-in hardware profiler (`scripts/hardware_profile.sh`) detects host CPU cores, RAM, and GPU acceleration (NVENC, VAAPI).
-- Automatically selects the optimal encoding preset, bitrate, and resolution to prevent dropped frames and thermal throttling.
-- Supports manual override via environment variables (`STREAM_PROFILE` or `STREAM_RES`).
+If YouTube and TikTok are selected together, they use separate native canvases because their aspect ratios differ. If several selected platforms are compatible, the engine shares one encoder and fans the encoded stream out through FFmpeg `tee` to save CPU/GPU.
 
-### 3. 🛡️ Ultra-Low Resource Footprint (1 vCPU / 1 GB RAM Optimized)
-- Node.js runtime memory capped at 160MB (`--max-old-space-size=160`).
-- Chromium headless execution tuned with `--single-process --disable-gpu --disable-dev-shm-usage --js-flags="--max-old-space-size=256"`.
-- 24-hour disk and in-memory caching to eliminate redundant external API requests.
-- Lightweight DOM reflows with `requestAnimationFrame` and client-side clock calculations.
+Custom destinations can override their layout and capabilities:
 
-### 4. 🔄 Autonomous Self-Healing & Maintenance
-- **Watchdog Engine (`scripts/watchdog.sh`)**: Runs every minute via cron to monitor web server health, virtual display (Xvfb), browser, and FFmpeg streaming processes. Automatically revives dropped services.
-- **Scheduled Maintenance (`scripts/maintenance.sh`)**: Runs daily at 03:30 AM (minimum viewership window) to pull Git updates, prune stale cache files (>7 days), rotate and compress logs (>15MB), and gracefully refresh memory.
-- **Crontab Setup Script (`scripts/setup_cron.sh`)**: Installs all autonomous automation with a single command.
+```env
+CUSTOM1_RTMP_TARGET=rtmps://example.com/live/private-key
+CUSTOM1_LAYOUT=square
+CUSTOM1_MAX_PROFILE=balanced
+CUSTOM1_MAX_FPS=30
+CUSTOM1_MAX_VIDEO_BITRATE=6000k
+```
 
-### 5. 🌍 195 World Capitals & Dual-Verified Prayer Rail
-- Full-height right sidebar displaying 5 capitals per view, cycling through all 195 sovereign nations every 35 seconds.
-- Displays High/Low temperatures, local time, Hijri and Gregorian dates.
-- 6 prayer times (Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha) with the next upcoming prayer highlighted with a golden glow border.
-- Cross-verified against dual authoritative calculation engines (**eSalah** and **AlAdhan**).
+## Adaptive quality profiles
 
-### 6. 📐 Responsive Auto-Fit Typography
-- Dynamic scaling engine (`fitDynamic`) adjusts font sizes in real time to fit any verse length—from short verses to the longest verse in the Quran (Surah Al-Baqarah 2:282)—without clipping, overflow, or scrollbars.
+| Profile | Landscape native frame | Typical intent |
+| --- | ---: | --- |
+| `nano` | 640×360 | emergency/minimum-load mode |
+| `micro` | 854×480 | ultra-low-resource VPS |
+| `eco` | 1280×720 | efficient HD |
+| `balanced` | 1920×1080 | Full HD |
+| `high` | 2560×1440 | 1440p when verified sustainable |
+| `ultra` | 3840×2160 | 4K when benchmark/hardware allows |
+| `extreme` | 7680×4320 | custom 8K-capable workflows only when explicitly supported |
 
----
+A manual `STREAM_PROFILE` is treated as a **ceiling**, not permission to overload the host. The progressive benchmark can approve higher tiers only after real encode tests. NVENC is used only after an actual smoke test succeeds; VAAPI remains opt-in where driver/X11 behavior is uncertain.
 
-## 📊 Streaming Hardware Tiers
+On a 1 vCPU / 1 GB server the system normally starts around `micro` and may fall to `nano` or reduce FPS further if necessary. Stronger hardware can rise to 1440p/4K after verification.
 
-| Profile | Target Hardware | Resolution | FPS | Video Bitrate | FFmpeg Preset | Audio Bitrate |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Eco** *(Default for 1GB)* | Oracle Free Tier / 1 vCPU, 1 GB RAM | **1280×720 (HD)** | 30 | 1,800 kbps | `ultrafast` | 128 kbps |
-| **Balanced** | Standard VPS / 2–4 vCPU, 2–4 GB RAM | **1920×1080 (FHD)** | 30 | 4,200 kbps | `veryfast` | 160 kbps |
-| **High** | 4–8 vCPU, 8 GB+ RAM / Mid GPU | **2560×1440 (2K)** | 60 | 8,500 kbps | `faster` / `NVENC` | 192 kbps |
-| **Ultra** | Dedicated Server / High-End GPU | **3840×2160 (4K)** | 60 | 16,000 kbps | `fast` / `NVENC` | 256 kbps |
-| **Extreme** | Workstation / Data Center GPU | **7680×4320 (8K)** | 60 | 36,000 kbps | `hevc_nvenc` | 320 kbps |
+## Resource envelope
 
----
+The resource governor watches:
 
-## 🏗️ System Architecture
+- total host CPU usage;
+- total memory pressure;
+- the slowest active FFmpeg worker;
+- benchmark ceiling;
+- selected platform count and native layout groups;
+- measured outbound bandwidth.
+
+Defaults target comfortable headroom instead of running continuously at saturation:
+
+```env
+RESOURCE_CPU_SOFT=78
+RESOURCE_CPU_HARD=88
+RESOURCE_RAM_SOFT=82
+RESOURCE_RAM_HARD=89
+SYSTEMD_CPU_HARD_PCT=90
+RESOURCE_SPEED_SOFT=0.97
+```
+
+The governor progressively reduces resolution, then FPS and UI cost. At the absolute minimum floor it stops restarting repeatedly and lets the systemd CPU/memory envelope contain overload instead of creating a restart loop.
+
+## Architecture
 
 ```mermaid
 graph TD
-    A[AlQuran Cloud & QuranEnc] -->|Uthmani Text, Translations, Tafsir| S[Web Server Node.js]
-    B[EveryAyah CDN] -->|128kbps Verse Audio| C[Web UI / app.js]
-    D[Open-Meteo & eSalah / AlAdhan] -->|Weather & Prayer Times| S
-    S -->|24h Disk Cache .cache/| S
-    S -->|HTTP / WebSocket| C
-    C -->|Render 60fps| X[Virtual Display Xvfb :99]
-    C -->|Synchronized Audio| P[PulseAudio Virtual Sink]
-    X -->|x11grab| F[FFmpeg Adaptive Encoder]
-    P -->|pulse monitor| F
-    F -->|RTMP Stream| R[YouTube / TikTok / Custom Live]
-    W[Watchdog Cron * * * * *] -->|Health Checks & Recovery| S
-    M[Maintenance Cron 30 3 * * *] -->|Git Pull, Cache Prune, Log Rotation| S
+    DATA[Quran / Tafsir / Weather / Prayer APIs] --> WEB[Shared Node.js Web Server]
+    WEB --> PLAN[Adaptive Stream Planner]
+    PLAN --> L[Native 16:9 Canvas]
+    PLAN --> P[Native 9:16 Canvas]
+    PLAN --> S[Native 1:1 Canvas]
+    L --> EL[FFmpeg Encoder Group]
+    P --> EP[FFmpeg Encoder Group]
+    S --> ES[FFmpeg Encoder Group]
+    EL --> YT[YouTube / compatible targets]
+    EP --> TT[TikTok / vertical targets]
+    ES --> CU[Custom square targets]
+    GOV[Global Resource Governor] --> PLAN
+    BENCH[Progressive Host Benchmark] --> PLAN
+    NET[Egress Probe] --> PLAN
+    WD[Watchdog] --> PLAN
 ```
 
----
-
-## 🚀 Quick Start Guide
-
-### 1. Prerequisites
-
-Ensure your system has the required packages installed:
-
-```bash
-# Ubuntu / Debian
-sudo apt-get update && sudo apt-get install -y \
-  curl git ffmpeg xvfb pulseaudio \
-  chromium-browser fonts-amiri fonts-dejavu-core
-```
-
-Ensure Node.js 18+ is installed:
-
-```bash
-node -v # Should report v18.0.0 or higher
-```
-
-### 2. Installation
-
-Clone the repository and prepare your environment:
+## Quick start
 
 ```bash
 git clone https://github.com/Alaa91H/QuranLiveStream.git
 cd QuranLiveStream
 cp .env.example .env
-```
-
-Edit `.env` with your streaming keys:
-
-```bash
+chmod 600 .env
+chmod +x scripts/*.sh
 nano .env
 ```
 
+Choose only the platforms you want:
+
 ```env
-# RTMP Configuration
-YOUTUBE_RTMP_URL=rtmp://a.rtmp.youtube.com/live2
-YOUTUBE_STREAM_KEY=xxxx-xxxx-xxxx-xxxx-xxxx
+STREAM_TARGETS=youtube,tiktok
 
-# Optional: TikTok / Vertical
-TIKTOK_RTMP_URL=rtmp://live-push.tiktok.com/live
-TIKTOK_STREAM_KEY=xxxx-xxxx-xxxx
+YOUTUBE_RTMP_URL=rtmps://a.rtmps.youtube.com/live2
+YOUTUBE_STREAM_KEY=YOUR_KEY
 
-# Optional Override: eco, balanced, high, ultra, extreme
-STREAM_PROFILE=eco
+TIKTOK_RTMP_URL=YOUR_TIKTOK_INGEST
+TIKTOK_STREAM_KEY=YOUR_KEY
+
+STREAM_PROFILE=auto
+QUALITY_POLICY=auto
 ```
 
-### 3. Run Locally (Preview Mode)
-
-To preview the broadcast interface in your browser:
+Prepare a fresh server:
 
 ```bash
-npm run web
+./scripts/first_boot.sh --force
+./scripts/setup_cron.sh
+./scripts/control.sh preflight
+./scripts/control.sh plan
+./scripts/control.sh start
 ```
 
-Open `http://localhost:4177` in your browser.
-- Standard broadcast view: `http://localhost:4177`
-- Longest Ayah QA stress test (2:282): `http://localhost:4177/?qa=1`
-- Jump to specific Surah & Ayah: `http://localhost:4177/?surah=18&ayah=1`
-
-### 4. Start 24/7 Live Stream
-
-```bash
-# Make scripts executable
-chmod +x scripts/*.sh
-
-# Start YouTube Live Stream
-./scripts/stream_youtube.sh
-```
-
-Or manage via control script:
+Useful controls:
 
 ```bash
 ./scripts/control.sh start youtube
+./scripts/control.sh start youtube,tiktok,facebook
 ./scripts/control.sh status
-./scripts/control.sh logs youtube
+./scripts/control.sh targets
+./scripts/control.sh plan
+./scripts/control.sh logs stream
+./scripts/control.sh logs governor
+./scripts/control.sh stop
 ```
 
-### 5. Install Autonomous Cron Jobs
+The old `stream_youtube.sh`, `stream_tiktok.sh` and `stream_dual.sh` commands remain only as compatibility wrappers around the universal engine.
 
-Enable the 1-minute watchdog and daily 03:30 AM maintenance:
+## Self-healing and maintenance
 
-```bash
-./scripts/setup_cron.sh
-```
+- `resource_governor.sh`: fast CPU/RAM/realtime-speed adaptation.
+- `watchdog.sh`: verifies the shared web server and **every active native canvas/encoder group** and performs a coordinated restart if one group dies.
+- `maintenance.sh`: fast-forwards clean server checkouts, rotates logs/cache, performs a clean weekly benchmark only when stale, and does **not** force an unnecessary daily restart or kernel page-cache drop.
+- `setup_cron.sh`: installs watchdog and low-frequency maintenance while the fast governor runs as a user systemd service.
+- systemd uses CPU and memory accounting plus a final safety envelope.
 
----
-
-## 🧪 Quality Assurance & Gates
-
-The project contains a strict automated verification suite ensuring 100% integrity before any deployment:
+## Quality assurance
 
 ```bash
+npm test
+# or
 node scripts/qa.js
 ```
 
-### Checks Performed:
-- **Gate 1: 195 Sovereign Countries**: Validates codes, names, coordinates, timezones, and flag assets.
-- **Gate 2: 114 Surahs Canonical Roster**: Validates 6,236 total verses, numbering, Arabic/English names, and revelation types.
-- **Gate 3: UI Design Integrity**: Validates clean Tafsir boxes, reciter equalizer waveforms, and responsive fitting.
-- **Gate 4: Automation Script Engine**: Verifies hardware profiler, UI launcher, streaming loops, watchdog, and cron scripts.
-- **Gate 5: Live API Contracts**: Smoke tests `/api/health`, `/api/surahs`, `/api/capitals`, and `/api/quran`.
+The QA suite verifies:
 
----
+- all 195 countries and 114 Surahs / 6,236 Ayahs;
+- native 16:9 / 9:16 / 1:1 layouts;
+- universal planner/worker/governor architecture;
+- absence of geometry-changing `scale/crop/pad` filters in the native worker;
+- progressive 1440p/4K benchmark gates;
+- local API fixtures including the longest Ayah stress case.
 
-## 🤝 Connect & Support
+GitHub Actions also runs Bash and JavaScript syntax checks plus the native-stream architecture gate on every push to `main`.
 
-Created and maintained with dedication by **Alaa Hussein**.
+## Security
 
-- 🌐 **Connect with me**: [https://github.com/Alaa91H#-connect-with-me](https://github.com/Alaa91H#-connect-with-me)
-- 💖 **Support the project**: [https://github.com/Alaa91H#-support-me](https://github.com/Alaa91H#-support-me)
+Keep `.env` private. Stream keys must never be committed. `.env.example` contains placeholders only, and CI verifies that `.env` is not tracked.
 
----
+## License
 
-## 📄 License
-
-This project is open-source and available under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE).
