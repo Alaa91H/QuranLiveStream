@@ -1,58 +1,90 @@
-#!/bin/bash
-# لوحة تحكم البث
-BASE="$HOME/quran-live-stream"
-case "$1" in
+#!/usr/bin/env bash
+set -Eeuo pipefail
+BASE="$(cd "$(dirname "$0")/.." && pwd)"
+SERVICE="quran-live.service"
+
+ensure_service(){
+  if ! systemctl --user cat "$SERVICE" >/dev/null 2>&1; then
+    "$BASE/scripts/install_service.sh"
+  fi
+}
+
+case "${1:-}" in
   start)
-    echo "تشغيل البث..."
+    ensure_service
     rm -f "$BASE/runtime/broadcast_stopped.flag"
     systemctl --user daemon-reload
-    if [ "$2" == "youtube" ]; then systemctl --user start quran-live-youtube.service; systemctl --user status quran-live-youtube.service --no-pager
-    elif [ "$2" == "tiktok" ]; then systemctl --user start quran-live-tiktok.service; systemctl --user status quran-live-tiktok.service --no-pager
-    elif [ "$2" == "dual" ]; then systemctl --user start quran-live-youtube.service quran-live-tiktok.service; systemctl --user status quran-live-youtube.service quran-live-tiktok.service --no-pager
-    else systemctl --user start quran-live-youtube.service; echo "✓ تم تشغيل يوتيوب (افتراضي). للتيك توك: $0 start tiktok"; fi
+    systemctl --user start "$SERVICE"
+    systemctl --user status "$SERVICE" --no-pager | head -n 60
     ;;
   stop)
-    echo "ايقاف البث..."
+    echo "Stopping stream..."
+    mkdir -p "$BASE/runtime"
     touch "$BASE/runtime/broadcast_stopped.flag"
-    systemctl --user stop quran-live-youtube.service quran-live-tiktok.service 2>/dev/null; "$BASE/scripts/stop_ui.sh"; echo "✓ توقف"
+    systemctl --user stop "$SERVICE" 2>/dev/null || true
+    "$BASE/scripts/stop_ui.sh" >/dev/null 2>&1 || true
+    echo "Stopped."
     ;;
   restart)
-    $0 stop; sleep 2; $0 start $2
+    ensure_service
+    rm -f "$BASE/runtime/broadcast_stopped.flag"
+    systemctl --user restart "$SERVICE"
+    systemctl --user status "$SERVICE" --no-pager | head -n 60
     ;;
   status)
-    systemctl --user status quran-live-youtube.service quran-live-tiktok.service --no-pager 2>&1 | head -n 80
-    echo "--- ps ---"
-    ps aux | grep ffmpeg | grep -v grep || echo "لا يوجد ffmpeg"
-    echo "--- logs ---"
-    tail -n 20 "$BASE/logs/stream_youtube.log" 2>&1 | tail -n 20
+    ensure_service
+    systemctl --user status "$SERVICE" --no-pager 2>&1 | head -n 80 || true
+    echo "--- adaptive telemetry ---"
+    cat "$BASE/runtime/load.status" 2>/dev/null || echo "No telemetry yet."
+    echo "--- selected targets ---"
+    grep -E '^STREAM_TARGETS=' "$BASE/.env" 2>/dev/null || echo "STREAM_TARGETS=yellow default: youtube"
+    echo "--- ffmpeg ---"
+    ps -eo pid,pcpu,pmem,args | grep '[f]fmpeg' || echo "No ffmpeg process."
     ;;
   logs)
-    tail -f "$BASE/logs/stream_${2:-youtube}.log"
+    touch "$BASE/logs/stream_universal.log"
+    tail -f "$BASE/logs/stream_universal.log"
     ;;
   enable)
-    systemctl --user enable quran-live-youtube.service quran-live-tiktok.service; echo "✓ تشغيل تلقائي عند الاقلاع مفعل"
-    systemctl --user enable --now quran-live-youtube.service 2>&1 | tail -n 5
+    ensure_service
+    systemctl --user enable "$SERVICE"
+    systemctl --user start "$SERVICE"
+    echo "Autostart enabled."
     ;;
   disable)
-    systemctl --user disable quran-live-youtube.service quran-live-tiktok.service; echo "✓ تم تعطيل التشغيل التلقائي"
+    systemctl --user disable "$SERVICE" 2>/dev/null || true
+    echo "Autostart disabled."
     ;;
   prepare)
-    echo "تجهيز السيرفر قبل البث (تحميل + قياس + فحص، بدون تشغيل)..."
-    "$BASE/scripts/prime_static_cache.sh" || true
-    "$BASE/scripts/benchmark_host.sh" --force || true
-    "$BASE/scripts/probe_egress.sh" --force || true
-    "$BASE/scripts/preflight.sh"; echo "✓ اكتمل التجهيز (راجع preflight verdict أعلاه)"
+    echo "Preparing host (dependencies/cache/benchmark/network/preflight)..."
+    "$BASE/scripts/first_boot.sh" --force
+    "$BASE/scripts/install_service.sh"
+    "$BASE/scripts/preflight.sh"
+    echo "Preparation complete."
     ;;
   preflight)
     "$BASE/scripts/preflight.sh"
     ;;
+  targets)
+    echo "Configured platform list:"
+    grep -E '^STREAM_TARGETS=' "$BASE/.env" 2>/dev/null || echo "STREAM_TARGETS=youtube"
+    echo "Any slug is supported when SLUG_RTMP_URL and SLUG_STREAM_KEY are defined."
+    ;;
+  reset-adaptive)
+    rm -f "$BASE/runtime/adaptive_rank" "$BASE/runtime/load.status"
+    echo "Adaptive state reset; next restart begins from hardware/benchmark profile."
+    ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|logs|enable|disable|prepare|preflight} [youtube|tiktok|dual]"
-    echo "  $0 prepare        # تجهيز كامل قبل البث (تحميل+قياس+فحص) بدون تشغيل"
-    echo "  $0 start          # يشغل يوتيوب"
-    echo "  $0 start tiktok   # يشغل تيك توك"
-    echo "  $0 start dual     # يشغل الاثنين معا"
-    echo "  $0 status         # حالة البث"
-    echo "  $0 logs youtube   # متابعة سجل يوتيوب"
+    cat <<EOF
+Usage: $0 {start|stop|restart|status|logs|enable|disable|prepare|preflight|targets|reset-adaptive}
+
+The enabled platforms are controlled only by .env, for example:
+  STREAM_TARGETS=youtube,tiktok,facebook
+
+Custom platform example:
+  STREAM_TARGETS=youtube,myplatform
+  MYPLATFORM_RTMP_URL=rtmps://ingest.example.com/live
+  MYPLATFORM_STREAM_KEY=secret
+EOF
     ;;
 esac
