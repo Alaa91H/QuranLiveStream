@@ -70,8 +70,28 @@ jobs:
           test "$(quran_target_h264_profile kick)" = main
           test "$(quran_target_audio_rate kick)" -le 48000
           test "$(quran_target_audio_channels kick)" = 2
+
+          # Platform/governor FPS changes must control the frame-count GOP. Fixed
+          # keyint values in x264-params would override the adaptive 2-second GOP.
+          if grep -nE 'X264_PARAMS=.*(keyint|min-keyint)=' scripts/hardware_profile.sh; then
+            echo 'Fixed keyint in X264_PARAMS overrides the adaptive 2-second GOP.'
+            exit 1
+          fi
           grep -q 'GOP=$((FPS\*2))' scripts/stream_worker.sh
           grep -q -- '-g "$GOP" -keyint_min "$GOP"' scripts/stream_worker.sh
+
+      - name: Validate adaptive ceiling invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          export STREAM_PROFILE=nano
+          source scripts/resource_governor.sh
+          first="$(benchmark_ceiling)"
+          test "$STREAM_PROFILE" = nano
+          second="$(benchmark_ceiling)"
+          test "$STREAM_PROFILE" = nano
+          test "$first" = nano
+          test "$second" = nano
 
       - name: Ensure .env secrets are not tracked
         shell: bash
