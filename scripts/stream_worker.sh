@@ -13,14 +13,16 @@ log(){ echo "[$(date '+%F %T')] [$GROUP] $*" | tee -a "$LOG"; }
 to_kbit(){ case "${1:-}" in *[kK])echo "${1%[kK]}";; *[mM])echo "$(( ${1%[mM]}*1000 ))";; ''|*[!0-9]*)echo 0;; *)echo "$1";; esac; }
 profile_quality_kbit(){ local p="$1" fps="$2"; case "$p" in nano)echo 600;;micro)echo 1000;;eco)[ "$fps" -ge 50 ]&&echo 6000||echo 4000;;balanced)[ "$fps" -ge 50 ]&&echo 12000||echo 8000;;high)[ "$fps" -ge 50 ]&&echo 24000||echo 15000;;ultra)[ "$fps" -ge 50 ]&&echo 35000||echo 30000;;extreme)[ "$fps" -ge 50 ]&&echo 60000||echo 45000;;*)echo 1000;;esac; }
 software_preset(){ case "$1" in nano|micro|eco|high|ultra|extreme)echo ultrafast;;balanced)echo veryfast;;*)echo ultrafast;;esac; }
+h264_profile_rank(){ case "${1:-high}" in baseline)echo 0;;main)echo 1;;*)echo 2;;esac; }
 
 IFS=',' read -ra TARGETS <<< "$TARGET_CSV"; TARGET_COUNT=${#TARGETS[@]}; [ "$TARGET_COUNT" -gt 0 ] || exit 1
-FPS="$STREAM_FPS"; GROUP_AUDIO_RATE="$AUDIO_SAMPLERATE"; GROUP_AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"; H264_PROFILE=high
+FPS="$STREAM_FPS"; GROUP_AUDIO_RATE="$AUDIO_SAMPLERATE"; GROUP_AUDIO_CHANNELS="${AUDIO_CHANNELS:-1}"; H264_PROFILE=high; H264_PROFILE_RANK=2
 for t in "${TARGETS[@]}"; do
   cap="$(quran_target_max_fps "$t")"; [ "$cap" -lt "$FPS" ] && FPS="$cap"
   rate="$(quran_target_audio_rate "$t")"; [ "$rate" -gt "$GROUP_AUDIO_RATE" ] && GROUP_AUDIO_RATE="$rate"
   channels="$(quran_target_audio_channels "$t")"; [ "$channels" -gt "$GROUP_AUDIO_CHANNELS" ] && GROUP_AUDIO_CHANNELS="$channels"
-  [ "$(quran_target_h264_profile "$t")" = main ] && H264_PROFILE=main
+  profile="$(quran_target_h264_profile "$t")"; profile_rank="$(h264_profile_rank "$profile")"
+  if [ "$profile_rank" -lt "$H264_PROFILE_RANK" ]; then H264_PROFILE="$profile"; H264_PROFILE_RANK="$profile_rank"; fi
 done
 if [ -f "$RUNTIME/governor.env" ]; then source "$RUNTIME/governor.env" 2>/dev/null || true; fi
 if [[ "${GOVERNOR_FPS_CAP:-}" =~ ^[0-9]+$ ]] && [ "${GOVERNOR_FPS_CAP:-0}" -gt 0 ] && [ "$FPS" -gt "$GOVERNOR_FPS_CAP" ]; then FPS="$GOVERNOR_FPS_CAP"; fi
