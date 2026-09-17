@@ -8,42 +8,30 @@
   <title>Quran Live Stream</title>
   <link rel="stylesheet" href="/assets/fonts/fonts.css"/>
   <link rel="stylesheet" href="/style.css"/>
+  <link rel="stylesheet" href="/platform.css"/>
 </head>
 <body class="notranslate" translate="no">
   <div class="scene"></div>
   <div class="vignette"></div>
 
   <div class="broadcast-container">
-    <!-- LEFT PANEL: QURAN & TAFSIR STAGE -->
     <section class="quran-stage" aria-label="القرآن الكريم">
       <div class="quran-content-wrapper" id="quran-content-wrapper">
-        <!-- Basmala standalone line (visible at each surah start, except 1 & 9) -->
         <div class="basmala-line" id="basmala-line" style="display:none;">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>
-        <!-- Arabic Ayah (Without ornament as requested) -->
         <div class="ayah-ar" id="ayah-ar" data-fit="ayah">
           اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ
         </div>
-
-        <!-- English Translation -->
         <div class="ayah-translation-en" id="ayah-en" data-fit="translation">
           Allah! There is no deity except Him, the Ever-Living, the Sustainer of [all] existence.
         </div>
-
-        <!-- Khatma progress (overall recitation position) -->
         <div class="khatma-track" aria-hidden="true"><div class="khatma-fill" id="khatma-fill"></div></div>
-
         <div class="content-divider"></div>
-
-        <!-- Tafsir Container -->
         <div class="tafsir-container" id="tafsir-container">
-          <!-- Arabic Tafsir (Clean without top badges) -->
           <div class="tafsir-card tafsir-card-ar">
             <p class="tafsir-text" id="tafsir-ar" data-fit="tafsir-ar">
               الله الذي لا إله بحق إلا هو، المتصف بالحياة الكاملة الدائمة والقيومية التامة على جميع خلقه تدبيرًا وحفظًا، لا تأخذه سِنَةٌ ولا نوم.
             </p>
           </div>
-
-          <!-- English Tafsir (Clean without top badges) -->
           <div class="tafsir-card tafsir-card-en" dir="ltr">
             <p class="tafsir-text" id="tafsir-en" data-fit="tafsir-en">
               The verse affirms that Allah alone is the true God worthy of worship, possessing complete everlasting life, and sustaining all creation without fatigue or slumber.
@@ -52,9 +40,7 @@
         </div>
       </div>
 
-      <!-- Floating Bottom Adjacent Cards: 1. Surah & Ayah (+Makki/Madani), 2. Tafsir Info, 3. Reciter Info -->
       <div class="floating-pills-container">
-        <!-- Card 1: Surah & Ayah Info with Makkiyah / Madaniyah -->
         <div class="glass-pill surah-ayah-pill">
           <div class="pill-icon-circle">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -70,7 +56,6 @@
           </div>
         </div>
 
-        <!-- Card 2: Tafsir Info Card (Transferred from top badges) -->
         <div class="glass-pill tafsir-info-pill">
           <div class="pill-icon-circle">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -85,7 +70,6 @@
           </div>
         </div>
 
-        <!-- Card 3: Reciter Info Card -->
         <div class="glass-pill reciter-pill">
           <div class="reciter-avatar-box">
             <img src="/assets/alafasy.jpg" alt="Mishary Alafasy" class="reciter-avatar-img">
@@ -107,15 +91,13 @@
       </div>
     </section>
 
-    <!-- RIGHT PANEL: WORLD CITIES & PRAYER TIMES (Full height, footer removed) -->
     <aside class="world-panel" aria-label="مدن العالم">
-      <div class="city-cards-list" id="city-cards-container">
-        <!-- Rendered dynamically by app.js -->
-      </div>
+      <div class="city-cards-list" id="city-cards-container"></div>
     </aside>
   </div>
 
   <audio id="quran-audio" autoplay playsinline preload="auto" style="display:none;"></audio>
+  <script src="/platform-layout.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
