@@ -118,6 +118,19 @@ quran_target_audio_rate() {
   case "${target,,}" in kick|twitch|facebook|tiktok|instagram) echo 48000;; *) echo 44100;; esac
 }
 
+# Zero means no hard platform ceiling is known/configured. Twitch's published
+# broadcast guidance caps AAC audio at 160 kbps, so stronger quality profiles
+# must not leak their 192/256/320 kbps defaults into a Twitch/shared output.
+quran_target_max_audio_bitrate_kbit() {
+  local target="${1:-}" prefix var value
+  prefix="$(quran_target_prefix "$target")"; var="${prefix}_MAX_AUDIO_BITRATE"; value="${!var:-}"
+  if [ -n "$value" ]; then
+    case "$value" in *[kK])echo "${value%[kK]}";; *[mM])echo "$(( ${value%[mM]} * 1000 ))";; *[!0-9]*)echo 0;; *)echo "$value";; esac
+    return
+  fi
+  case "${target,,}" in twitch) echo 160;; *) echo 0;; esac
+}
+
 # A target can require a channel layout even when the low-resource global
 # default is mono. KICK currently requires stereo at ingest.
 quran_target_audio_channels() {
