@@ -24,7 +24,6 @@ sample_cpu_pct(){
   [ $((t2-t1)) -gt 0 ] && awk "BEGIN{printf \"%.0f\",100*(1-($i2-$i1)/($t2-$t1))}" || echo 0
 }
 sample_mem_pct(){ awk '/MemTotal:/{t=$2}/MemAvailable:/{a=$2}END{if(t>0)printf "%.0f",100*(t-a)/t;else print 0}' /proc/meminfo; }
-
 slowest_speed(){
   local f s min=""
   for f in "$RUNTIME"/groups/*/ffmpeg.progress; do
@@ -44,7 +43,6 @@ benchmark_ceiling(){
   if [ -n "$requested" ] && [ "${requested,,}" != "auto" ]; then rr="$(rank "${requested,,}")"; [ "$rr" -lt "$hr" ] && hp="$(prof "$rr")"; fi
   echo "$hp"
 }
-
 restart_stream(){
   if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet quran-live.service 2>/dev/null; then
     systemctl --user restart quran-live.service >/dev/null 2>&1 || true
@@ -63,10 +61,12 @@ write_governor(){
 cycle(){
   [ "${RESOURCE_GOVERNOR:-1}" = "0" ] && return 0
   [ -f "$RUNTIME/stream_active.flag" ] || return 0
-  local cpu mem speed now ceiling cr active ar high=0 low=0 changed=0
+  local cpu mem speed now ceiling cr active ar high=0 low=0 changed=0 groups
   cpu="$(sample_cpu_pct)"; mem="$(sample_mem_pct)"; speed="$(slowest_speed)"; now="$(date +%s)"
-  ceiling="$(benchmark_ceiling)"; cr="$(rank "$ceiling")"
-  active="$ceiling"
+  ceiling="$(benchmark_ceiling)"; cr="$(rank "$ceiling")"; active="$ceiling"
+
+  # Prevent values omitted by a newer governor.env from leaking from a previous cycle.
+  unset GOVERNOR_PROFILE GOVERNOR_FPS_CAP GOVERNOR_CITY_LIMIT GOVERNOR_CHANGED_TS 2>/dev/null || true
   if [ -f "$GOV_ENV" ]; then
     source "$GOV_ENV" 2>/dev/null || true
     [ -n "${GOVERNOR_PROFILE:-}" ] && active="$GOVERNOR_PROFILE"
@@ -79,9 +79,9 @@ cycle(){
   local lowcpu="${RESOURCE_CPU_LOW:-52}" lowmem="${RESOURCE_RAM_LOW:-68}" minspd="${RESOURCE_SPEED_SOFT:-0.97}"
   local hits="${RESOURCE_HIGH_HITS:-3}" lowhits="${RESOURCE_LOW_HITS:-60}" cooldown="${RESOURCE_COOLDOWN_SEC:-240}"
   groups="$(find "$RUNTIME/groups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
-  printf '{"ts":%s,"cpu_pct":%s,"mem_pct":%s,"slowest_speed_x":"%s","profile":"%s","ceiling":"%s","groups":%s,"high_hits":%s,"low_hits":%s}\n' "$now" "$cpu" "$mem" "$speed" "$active" "$ceiling" "${groups:-0}" "$high" "$low" > "$STATUS"
+  printf '{"ts":%s,"cpu_pct":%s,"mem_pct":%s,"slowest_speed_x":"%s","profile":"%s","ceiling":"%s","groups":%s,"fps_cap":"%s","high_hits":%s,"low_hits":%s}\n' \
+    "$now" "$cpu" "$mem" "$speed" "$active" "$ceiling" "${groups:-0}" "${GOVERNOR_FPS_CAP:-}" "$high" "$low" > "$STATUS"
 
-  # Hard limit reacts in one cycle; soft pressure requires persistence.
   if [ "$cpu" -ge "$hard" ] || [ "$mem" -ge "$mhard" ]; then high="$hits"; low=0
   elif awk -v s="$speed" -v m="$minspd" 'BEGIN{exit !(s>0 && s<m)}'; then high=$((high+1)); low=0
   elif [ "$cpu" -ge "$soft" ] || [ "$mem" -ge "$msoft" ]; then high=$((high+1)); low=0
@@ -89,14 +89,27 @@ cycle(){
   else high=0; low=0; fi
 
   if [ "$high" -ge "$hits" ] && [ $((now-changed)) -ge 20 ]; then
-    local next fps="" cities=""
-    if [ "$ar" -gt 0 ]; then next="$(prof $((ar-1)))"
+    local next fps="" cities="" oldfps
+    if [ "$ar" -gt 0 ]; then
+      next="$(prof $((ar-1)))"
     else
-      next=nano
-      oldfps="${GOVERNOR_FPS_CAP:-10}"
-      case "$oldfps" in ''|*[!0-9]*)oldfps=10;; esac
-      if [ "$oldfps" -gt 8 ]; then fps=8; elif [ "$oldfps" -gt 6 ]; then fps=6; elif [ "$oldfps" -gt 5 ]; then fps=5; else fps=4; fi
+      next=nano; oldfps="${GOVERNOR_FPS_CAP:-10}"; case "$oldfps" in ''|*[!0-9]*)oldfps=10;; esac
+      if [ "$oldfps" -gt 8 ]; then fps=8; elif [ "$oldfps" -gt 6 ]; then fps=6; elif [ "$oldfps" -gt 5 ]; then fps=5; elif [ "$oldfps" -gt 4 ]; then fps=4; else fps=4; fi
       cities=1
+      # Already at the absolute quality/workload floor: repeated restarts cannot
+      # create more capacity. Keep streaming under the systemd CPU quota instead
+      # of flapping every 20 seconds; alert at most once per 15 minutes.
+      if [ "$oldfps" -le 4 ] && [ "${GOVERNOR_CITY_LIMIT:-1}" -le 1 ]; then
+        marker="$RUNTIME/governor_floor_alert"
+        last="$(cat "$marker" 2>/dev/null || echo 0)"; case "$last" in ''|*[!0-9]*)last=0;; esac
+        if [ $((now-last)) -ge 900 ]; then
+          log "At minimum floor (nano/4fps/1 city) but pressure remains CPU=${cpu}% RAM=${mem}% speed=${speed}x; holding without restart."
+          echo "$now" > "$marker"
+          "$BASE_DIR/scripts/notify_telegram.sh" "⚠️ QuranLive is at minimum adaptive floor; systemd quota is containing overload (CPU ${cpu}% RAM ${mem}% speed ${speed}x)." >/dev/null 2>&1 || true
+        fi
+        echo "0 0 $changed" > "$STATE"
+        return
+      fi
     fi
     log "Pressure CPU=${cpu}% RAM=${mem}% slowest=${speed}x: $active -> $next${fps:+ @${fps}fps}."
     write_governor "$next" "$fps" "$cities"; echo "0 0 $now" > "$STATE"; restart_stream
