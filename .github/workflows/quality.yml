@@ -56,6 +56,20 @@ jobs:
           grep -q 'platform-layout.js' web/index.html
           grep -q 'layout="portrait"\|portrait)' scripts/platforms.sh
 
+      - name: Validate adaptive GOP contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Live platforms including KICK require/recommend a two-second
+          # keyframe interval. The worker computes GOP=FPS*2 after governor FPS
+          # caps; fixed keyint values in x264-params would silently override it.
+          if grep -nE 'X264_PARAMS=.*(keyint|min-keyint)=' scripts/hardware_profile.sh; then
+            echo 'Fixed keyint in X264_PARAMS overrides the adaptive 2-second GOP.'
+            exit 1
+          fi
+          grep -q 'GOP=$((FPS\*2))' scripts/stream_worker.sh
+          grep -q -- '-g "$GOP" -keyint_min "$GOP"' scripts/stream_worker.sh
+
       - name: Ensure .env secrets are not tracked
         shell: bash
         run: |
