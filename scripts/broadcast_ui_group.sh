@@ -75,7 +75,12 @@ xpid="$(cat "$XVFB_PID" 2>/dev/null || true)"
 if ! quran_owned_pid "$xpid" xvfb "$DISPLAY_NUM"; then
   rm -f "$XVFB_PID"
   Xvfb ":$DISPLAY_NUM" -screen 0 "${STREAM_WIDTH}x${STREAM_HEIGHT}x24" -nolisten tcp >"$LOG_DIR/xvfb_${GROUP}.log" 2>&1 &
-  echo $! > "$XVFB_PID"; sleep 1
+  xpid=$!; echo "$xpid" > "$XVFB_PID"; sleep 1
+  if ! quran_owned_pid "$xpid" xvfb "$DISPLAY_NUM"; then
+    rm -f "$XVFB_PID"
+    echo "[$(date '+%F %T')] ERROR Xvfb failed to stay alive on display :$DISPLAY_NUM." >>"$LOG_DIR/xvfb_${GROUP}.log"
+    exit 1
+  fi
 fi
 
 cpid="$(cat "$CHROME_PID" 2>/dev/null || true)"
@@ -117,7 +122,12 @@ if ! quran_owned_pid "$cpid" browser "$GR"; then
     --user-data-dir="$GR/chrome-profile" --js-flags="--max-old-space-size=${MEM} --optimize-for-size" \
     --disable-features=Translate,TranslateUI,MediaRouter,DialMediaRouteProvider,OptimizationHints,InterestFeedContentSuggestions,PrivacySandboxSettings4,AutofillServerCommunication,GlobalMediaControls,HeavyAdPrivacyMitigations,CalculateNativeWinOcclusion,PaintHolding \
     "${CHROME_AUDIO[@]}" --app="http://127.0.0.1:$PORT/?$QUERY" >"$LOG_DIR/chromium_${GROUP}.log" 2>&1 &
-  echo $! > "$CHROME_PID"; sleep 3
+  cpid=$!; echo "$cpid" > "$CHROME_PID"; sleep 3
+  if ! quran_owned_pid "$cpid" browser "$GR"; then
+    rm -f "$CHROME_PID"
+    echo "[$(date '+%F %T')] ERROR browser failed to stay alive for group $GROUP on display :$DISPLAY_NUM." >>"$LOG_DIR/chromium_${GROUP}.log"
+    exit 1
+  fi
 fi
 
 echo "$SIG" > "$GR/signature"
