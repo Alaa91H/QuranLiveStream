@@ -1,0 +1,63 @@
+name: QuranLiveStream Quality Gates
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quran-live-quality-main
+  cancel-in-progress: true
+
+jobs:
+  static-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            echo "bash -n $file"
+            bash -n "$file"
+          done < <(find scripts -type f -name '*.sh' -print0)
+
+      - name: JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check web/app.js
+          node --check web/server.js
+          node --check web/platform-layout.js
+          for f in scripts/*.js; do
+            [ -f "$f" ] && node --check "$f"
+          done
+
+      - name: Validate universal stream architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'stream_multi.sh' systemd/quran-live.service
+          grep -q 'quran_profile_dimensions' scripts/platforms.sh
+          grep -q 'stream_worker.sh' scripts/stream_multi.sh
+          grep -q 'scale\|crop\|pad' scripts/stream_worker.sh && {
+            echo 'Worker contains forbidden scale/crop/pad token'; exit 1;
+          } || true
+          grep -q 'platform.css' web/index.html
+          grep -q 'platform-layout.js' web/index.html
+
+      - name: Ensure no committed streaming secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE --exclude='.env.example' --exclude-dir='.git' '(STREAM_KEY|RTMP_TARGET)=[^[:space:]]{8,}' .; then
+            echo 'Potential committed streaming secret found.'
+            exit 1
+          fi
