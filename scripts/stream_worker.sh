@@ -65,8 +65,10 @@ elif [ "$CODEC_REQ" = h265 ]||[ "$CODEC_REQ" = hevc ]; then
 else log "Unsupported requested codec '$CODEC_REQ'; falling back to h264."; VARGS=(-c:v libx264 -preset "$SW_PRESET" -tune zerolatency -threads "$FFMPEG_THREADS" -profile:v "$H264_PROFILE"); fi
 
 "$BASE_DIR/scripts/broadcast_ui_group.sh" "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$DISPLAY_NUM" >>"$LOG" 2>&1||exit 1
-AUDIO_INPUT=()
-if [ "${AUDIO_MODE:-pulse}" = file ]; then "$BASE_DIR/scripts/build_audio_playlist.sh" >>"$LOG" 2>&1||true; if [ -s "$RUNTIME/audio_playlist.txt" ]; then AUDIO_INPUT=(-re -stream_loop -1 -f concat -safe 0 -probesize 50k -analyzeduration 0 -thread_queue_size 64 -fflags +genpts -i "$RUNTIME/audio_playlist.txt"); else AUDIO_INPUT=(-thread_queue_size 64 -f lavfi -i "anullsrc=r=${GROUP_AUDIO_RATE}:cl=stereo"); fi; else AUDIO_INPUT=(-thread_queue_size 128 -f pulse -i quran_sink.monitor); fi
+# The browser master owns recitation timing and prefers local MP3 files. Every
+# encoder captures the same quran_sink monitor, guaranteeing that text and audio
+# share one timeline across all native canvases.
+AUDIO_INPUT=(-thread_queue_size 128 -f pulse -i quran_sink.monitor)
 FPSMODE=(-fps_mode cfr); ffmpeg -hide_banner -h full 2>/dev/null|grep -q -- -fps_mode||FPSMODE=(-vsync cfr); GOP=$((FPS*2)); [ "$GOP" -lt 2 ]&&GOP=2
 printf 'GROUP=%s\nLAYOUT=%s\nPROFILE=%s\nWIDTH=%s\nHEIGHT=%s\nFPS=%s\nVIDEO_KBIT=%s\nENCODER=%s\nH264_PROFILE=%s\nAUDIO_KBIT=%s\nAUDIO_RATE=%s\nAUDIO_CHANNELS=%s\nTARGETS=%s\n' "$GROUP" "$LAYOUT" "$PROFILE_REQ" "$STREAM_WIDTH" "$STREAM_HEIGHT" "$FPS" "$VIDEO_KBIT" "$ACTIVE_ENCODER" "$H264_PROFILE" "$GROUP_AUDIO_KBIT" "$GROUP_AUDIO_RATE" "$GROUP_AUDIO_CHANNELS" "$TARGET_CSV" > "$GR/worker.env"
 while [ ! -f "$STOP_FLAG" ]; do
