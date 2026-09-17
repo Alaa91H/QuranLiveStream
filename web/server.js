@@ -6,6 +6,7 @@ const ROOT = path.join(__dirname);
 const PORT = Number(process.env.PORT || 4177);
 const OFFLINE = process.env.QURAN_OFFLINE === '1';
 const CACHE_DEFAULT_MS = 24 * 60 * 60 * 1000;
+const CACHE_MAX_ENTRIES = Math.min(Math.max(Number(process.env.CACHE_MAX_ENTRIES || 512) || 512, 64), 4096);
 const cache = new Map();
 const inflight = new Map();
 const CACHE_DIR = path.join(ROOT, '.cache');
@@ -39,15 +40,30 @@ function readDisk(key) {
 function writeDisk(key, entry) {
   try { fs.writeFileSync(diskPath(key), JSON.stringify(entry)); } catch {}
 }
+function rememberCache(key, entry) {
+  // Map insertion order gives a tiny dependency-free LRU. Disk remains the
+  // durable long-lived cache, while RAM stays bounded on 1GB/low-heap hosts.
+  cache.delete(key);
+  cache.set(key, entry);
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 async function cached(key, loader, ttl = CACHE_DEFAULT_MS) {
   const now = Date.now();
   const mem = cache.get(key);
   const hit = mem || readDisk(key);
-  if (hit && now - hit.time < ttl) { cache.set(key, hit); return hit.value; }
+  if (hit && now - hit.time < ttl) {
+    rememberCache(key, hit);
+    return hit.value;
+  }
+  if (mem) cache.delete(key);
   if (inflight.has(key)) return inflight.get(key);
   const task = loader().then(value => {
     const entry = { time: Date.now(), value };
-    cache.set(key, entry);
+    rememberCache(key, entry);
     writeDisk(key, entry);
     return value;
   }).catch(err => {
@@ -268,32 +284,42 @@ const surahsFile = path.join(ROOT, 'surahs.json');
 const surahsData = fs.existsSync(surahsFile) ? JSON.parse(fs.readFileSync(surahsFile, 'utf8')) : [];
 
 const AUDIO_DIR = path.join(ROOT, 'assets', 'audio');
+const audioInflight = new Set();
 try { fs.mkdirSync(AUDIO_DIR, { recursive: true }); } catch {}
+
+function localAudioReady(localPath) {
+  try { return fs.existsSync(localPath) && fs.statSync(localPath).size > 1000; } catch { return false; }
+}
 
 function getAyahAudioUrl(surah, ayah) {
   const s = String(surah).padStart(3, '0');
   const a = String(ayah).padStart(3, '0');
   const fileName = `${s}${a}.mp3`;
   const localPath = path.join(AUDIO_DIR, fileName);
-  if (fs.existsSync(localPath) && fs.statSync(localPath).size > 1000) {
-    return `/assets/audio/${fileName}`;
-  }
-  // Schedule background download if not yet cached on disk
+  if (localAudioReady(localPath)) return `/assets/audio/${fileName}`;
+  // Schedule a deduplicated background download if not yet cached on disk.
   cacheAudioInBackground(fileName, localPath);
   return `https://everyayah.com/data/Alafasy_128kbps/${fileName}`;
 }
 
 function cacheAudioInBackground(fileName, localPath) {
-  if (OFFLINE) return;
+  if (OFFLINE || audioInflight.has(fileName) || localAudioReady(localPath)) return;
+  audioInflight.add(fileName);
   const url = `https://everyayah.com/data/Alafasy_128kbps/${fileName}`;
-  fetch(url, { headers: { 'User-Agent': 'QuranLiveStream/3.0' } })
+  fetch(url, {
+    headers: { 'User-Agent': 'QuranLiveStream/3.0' },
+    signal: AbortSignal.timeout(15000)
+  })
     .then(async r => {
-      if (r.ok) {
-        const buf = Buffer.from(await r.arrayBuffer());
-        fs.writeFileSync(localPath, buf);
-      }
+      if (!r.ok) return;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length <= 1000) return;
+      const tmp = `${localPath}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, localPath);
     })
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => audioInflight.delete(fileName));
 }
 
 async function quranVerse(surah = 1, ayah = 1) {
@@ -458,10 +484,17 @@ async function capitalsPage(url) {
 }
 
 const routes = {
-  '/api/health': async () => ({ ok: true, service: 'quran-live-stream-web', now: new Date().toISOString(), capitals: capitals.length, surahs: surahsData.length }),
+  '/api/health': async () => ({ ok: true, service: 'quran-live-stream-web', now: new Date().toISOString(), capitals: capitals.length, surahs: surahsData.length, cacheEntries: cache.size, cacheLimit: CACHE_MAX_ENTRIES }),
   '/api/capitals': capitalsPage,
   '/api/surahs': async () => surahsData,
-  '/api/quran': async url => quranVerse(Number(url.searchParams.get('surah') || 1), Number(url.searchParams.get('ayah') || 1)),
+  '/api/quran': async url => {
+    const surah = Number(url.searchParams.get('surah') || 1);
+    const ayah = Number(url.searchParams.get('ayah') || 1);
+    const verse = await quranVerse(surah, ayah);
+    // Resolve audio at response time so a file downloaded after the text was
+    // cached is immediately promoted to the local path on subsequent loops.
+    return { ...verse, audioUrl: getAyahAudioUrl(surah, ayah) };
+  },
   '/api/city': async url => {
     const code = (url.searchParams.get('code') || 'TR').toUpperCase();
     const found = capitals.find(x => x.code === code);
