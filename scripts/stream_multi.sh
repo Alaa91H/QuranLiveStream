@@ -38,19 +38,25 @@ rm -f "$STOP_FLAG"; touch "$RUNTIME/stream_active.flag"
   echo "ACTIVE_PLAN=$PLAN"
 } > "$RUNTIME/active_profile.env"
 
-PIDS=()
+PIDS=(); CLEANED=0
 cleanup(){
+  [ "$CLEANED" -eq 0 ] || return 0
+  CLEANED=1
   touch "$STOP_FLAG"; rm -f "$RUNTIME/stream_active.flag"
-  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
-  sleep .5
-  for d in "$RUNTIME"/groups/*; do
-    [ -d "$d" ] || continue
-    kill "$(cat "$d/chrome.pid" 2>/dev/null)" 2>/dev/null || true
-    kill "$(cat "$d/xvfb.pid" 2>/dev/null)" 2>/dev/null || true
+  for p in "${PIDS[@]:-}"; do
+    [[ "$p" =~ ^[0-9]+$ ]] || continue
+    kill "$p" 2>/dev/null || true
   done
-  kill "$(cat "$RUNTIME/quran-web.pid" 2>/dev/null)" 2>/dev/null || true
+  # Give worker TERM traps time to reap their exact FFmpeg children before the
+  # native canvases disappear underneath x11grab.
+  for p in "${PIDS[@]:-}"; do
+    [[ "$p" =~ ^[0-9]+$ ]] || continue
+    for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$p" 2>/dev/null || break; sleep .1; done
+  done
+  "$BASE_DIR/scripts/stop_ui.sh" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 0' INT TERM
 
 idx=0
 while IFS='|' read -r group layout profile codec display targets; do
