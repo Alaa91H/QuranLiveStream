@@ -31,11 +31,17 @@ StandardError=append:$BASE_DIR/logs/systemd_universal.log
 WantedBy=default.target
 EOF
 
-chmod +x "$BASE_DIR/scripts/stream_universal.sh" "$BASE_DIR/scripts/control.sh" 2>/dev/null || true
+chmod +x "$BASE_DIR"/scripts/*.sh 2>/dev/null || true
 systemctl --user daemon-reload
+# Prevent legacy per-platform services from running extra encoders in parallel.
+for old in quran-live-youtube.service quran-live-tiktok.service; do
+  systemctl --user stop "$old" >/dev/null 2>&1 || true
+  systemctl --user disable "$old" >/dev/null 2>&1 || true
+done
 systemctl --user enable quran-live.service >/dev/null
 if command -v loginctl >/dev/null 2>&1; then
   loginctl enable-linger "$USER" >/dev/null 2>&1 || true
 fi
 echo "Installed: $UNIT"
+echo "Legacy per-platform services disabled to avoid duplicate encoding."
 echo "Start with: $BASE_DIR/scripts/control.sh start"
