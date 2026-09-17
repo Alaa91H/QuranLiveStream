@@ -80,6 +80,7 @@ assert(master.includes('stream_plan.sh') && master.includes('stream_worker.sh'),
 const workerCode = worker.split('\n').filter(l => !/^\s*#/.test(l)).join('\n');
 assert(!/(^|[,=:])\s*(scale|crop|pad)\s*=/.test(workerCode), 'Forbidden FFmpeg geometry filter found in native worker');
 assert(worker.includes('-video_size "${STREAM_WIDTH}x${STREAM_HEIGHT}"'), 'x11 capture is not bound to final native dimensions');
+assert(worker.includes('h264_profile_rank') && worker.includes('H264_PROFILE_RANK') && worker.includes('baseline)echo 0'), 'Shared H.264 encoder does not honor the lowest compatible profile');
 assert(governor.includes('RESOURCE_CPU_HARD') && governor.includes('slowest_speed') && governor.includes('minimum floor'), 'Global resource governor safeguards incomplete');
 assert(watchdog.includes('ffmpeg_alive=0') && watchdog.includes('now-mt') && watchdog.includes('-le 30'), 'Watchdog must require both a live FFmpeg process and a fresh progress heartbeat');
 assert(service.includes('CPUQuota=@CPU_QUOTA@') && service.includes('MemoryHigh=88%'), 'systemd resource envelope missing');
