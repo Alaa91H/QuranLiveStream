@@ -525,6 +525,11 @@ const server = http.createServer(async (req, res) => {
       '.ttf': 'font/ttf',
       '.mp3': 'audio/mpeg'
     };
+    if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, { error: 'method not allowed' }, 405);
+    if (req.method === 'HEAD') {
+      res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream', 'Content-Length': fs.statSync(fp).size });
+      return res.end();
+    }
     const isImmutable = ['.woff2', '.woff', '.ttf', '.mp3', '.jpg', '.png'].includes(ext);
     res.writeHead(200, {
       'Content-Type': types[ext] || 'application/octet-stream',

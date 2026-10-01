@@ -6,7 +6,8 @@
   "scripts": {
     "web": "node web/server.js",
     "qa": "node scripts/qa.js",
-    "test": "node scripts/qa.js",
+    "test": "node scripts/qa.js && node scripts/tests/cast/receiver.test.js",
+    "test:cast": "node scripts/tests/cast/receiver.test.js",
     "broadcast": "./scripts/broadcast_ui.sh"
   },
   "author": "Alaa Hussein",

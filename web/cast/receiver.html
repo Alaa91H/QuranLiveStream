@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Muslim Quran Cast</title>
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <link rel="stylesheet" href="/shared/fonts.css">
+  <link rel="stylesheet" href="/cast/cast.css">
+  <script defer src="/cast/receiver-protocol.js"></script>
+  <script defer src="/cast/receiver-state.js"></script>
+  <script defer src="/cast/receiver.js"></script>
+</head>
+<body>
+  <main class="broadcast">
+    <section class="stage" aria-label="القرآن الكريم">
+      <div class="content">
+        <div class="surah" id="surah">القرآن الكريم</div>
+        <div class="reference" id="reference">في انتظار تطبيق مسلم</div>
+        <div class="ayah" id="ayah"></div>
+        <div class="translation" id="translation" dir="auto"></div>
+        <div class="divider"></div>
+        <div class="tafsir" id="tafsir"></div>
+      </div>
+      <footer class="footer"><div><div class="reciter" id="reciter"></div><div class="progress"><span id="progress"></span></div></div></footer>
+    </section>
+    <aside class="world"><div class="prayer-title" id="location"></div><div class="prayers" id="prayers"></div></aside>
+  </main>
+  <cast-media-player id="player" class="player"></cast-media-player>
+  <div class="status" id="status" role="status">في انتظار مسلم</div>
+</body>
+</html>
