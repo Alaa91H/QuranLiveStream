@@ -3,8 +3,13 @@
   const protocol = QuranCastProtocol;
   const state = QuranCastState.createState();
   const $ = (id) => document.getElementById(id);
-  let senderId;
-  const send = (type, extra) => window.cast?.framework?.CastReceiverContext?.getInstance()?.sendCustomMessage(protocol.NAMESPACE, senderId, { type, ...extra });
+  let senderId = null;
+  let announcedReady = false;
+  const send = (type, extra, target = senderId) => {
+    if (!target) return false;
+    window.cast?.framework?.CastReceiverContext?.getInstance()?.sendCustomMessage(protocol.NAMESPACE, target, { type, ...extra });
+    return true;
+  };
   function render(p) {
     document.documentElement.lang = p.languageTag || 'ar';
     $('surah').textContent = `${p.surahArabicName} (${p.surahNumber}) · ${p.surahLocalizedName}`;
@@ -34,22 +39,41 @@
     const duration = Number(p.durationMs || 0);
     const position = Number(p.positionMs || 0);
     $('progress').style.width = `${duration > 0 ? Math.min(100, position / duration * 100) : 0}%`;
+    const settings = p.displaySettings || {};
+    $('translation').hidden = settings.showTranslation === false;
+    $('tafsir').hidden = settings.showTafsir === false;
+    $('prayers').hidden = settings.showPrayerTimes === false;
   }
   const context = cast.framework.CastReceiverContext.getInstance();
   const manager = context.getPlayerManager();
   const stateTypes = new Set(['FULL_STATE','AYAH_CHANGED','METADATA_CHANGED','DISPLAY_SETTINGS','RECITER_CHANGED']);
   context.addCustomMessageListener(protocol.NAMESPACE, (event) => {
-    senderId = event.senderId;
     let message;
     try { message = protocol.parse(event.data); }
     catch (error) {
-      send(error.message === 'unsupported-schema' ? 'UNSUPPORTED_SCHEMA' : 'MEDIA_ERROR', { supportedVersion: protocol.VERSION });
+      send(error.message === 'unsupported-schema' ? 'UNSUPPORTED_SCHEMA' : 'MEDIA_ERROR', { supportedVersion: protocol.VERSION }, event.senderId);
       return;
     }
+    if (!event.senderId || (senderId && event.senderId !== senderId)) return;
+    if (!senderId) senderId = event.senderId;
     if (stateTypes.has(message.type)) {
       const update = state.apply(message);
-      if (update.accepted) render(update.payload);
+      if (update.accepted) {
+        render(update.payload);
+        if (message.type === 'FULL_STATE' && !announcedReady) {
+          announcedReady = true;
+          send('UI_READY', {});
+          send('REQUEST_FULL_STATE', {});
+        }
+      }
     }
+  });
+  context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (event) => {
+    if (event.senderId !== senderId) return;
+    senderId = null;
+    announcedReady = false;
+    state.reset();
+    $('status').textContent = 'في انتظار تطبيق مسلم';
   });
   manager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (request) => {
     if (request.media?.contentId) {
@@ -59,6 +83,4 @@
   });
   manager.addEventListener(cast.framework.messages.EventType.ERROR, () => send('MEDIA_ERROR', {}));
   context.start({ receiverDisplayStatus: { statusText: 'القرآن الكريم · تطبيق مسلم' } });
-  send('UI_READY', {});
-  send('REQUEST_FULL_STATE', {});
 })();
